@@ -1132,6 +1132,15 @@
     transition: transform 0.2s;
   }
   .modal-overlay.open .modal { transform: translateY(0) scale(1); }
+  #yearly-chart-modal .modal { width: 560px; }
+  .yc-stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:16px; }
+  .yc-stat { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .yc-stat .k { font-size:0.7143em; color:var(--muted); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.04em; }
+  .yc-stat .v { font-family:var(--font-mono); font-size:1em; margin-top:3px; }
+  .yc-yearnav { display:flex; align-items:center; gap:8px; }
+  .yc-yearnav button { background:transparent; border:1px solid var(--border); color:var(--muted); border-radius:6px; width:28px; height:28px; cursor:pointer; font-size:1em; line-height:1; }
+  .yc-yearnav button:hover { color:var(--text); border-color:var(--text); }
+  .yc-bar { cursor:pointer; }
 
   .modal h2 {
     font-family:var(--font-serif);
@@ -2644,7 +2653,7 @@
       <div class="sub" id="debt-change-sub">vs last month: <span style="color:var(--income-green)">▼ $1,299 (3%)</span></div>
       <div class="bar-bg"><div class="bar-fill" id="debt-bar" style="width:0%"></div></div>
     </div>
-    <div class="stat-card" id="tile-yearly" style="border-color: rgba(62,255,163,0.3)">
+    <div class="stat-card" id="tile-yearly" style="border-color: rgba(62,255,163,0.3);cursor:pointer" onclick="openYearlyChart()" title="See month-by-month chart">
       <div class="label">Yearly Left Over</div>
       <div class="value" id="yearly-leftover" style="color: var(--income-green);">$0</div>
       <div class="sub" id="yearly-leftover-sub">Running year-to-date total</div>
@@ -6401,6 +6410,99 @@ function yearlyLeftover(yr, uptoMo) {
     }
   }
   return { total, months };
+}
+
+// ── Yearly Left Over bar chart ──
+let _ycYear = null;
+
+function openYearlyChart() {
+  _ycYear = calYear;
+  renderYearlyChart();
+  document.getElementById('yearly-chart-modal').classList.add('open');
+}
+function closeYearlyChart(e) {
+  if (e && e.target !== document.getElementById('yearly-chart-modal')) return;
+  document.getElementById('yearly-chart-modal').classList.remove('open');
+}
+function shiftYearlyChart(d) { _ycYear += d; renderYearlyChart(); }
+// Tap a bar to read its exact value (tooltips don't exist on touch screens)
+function ycShowMonth(m) {
+  const v = monthLeftover(_ycYear, m);
+  const fullNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('yc-detail').innerHTML = fullNames[m] + ' ' + _ycYear + ': <span style="color:' +
+    (v < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + (v < 0 ? '-' : '') + fmt(Math.abs(v)) + ' left over</span>';
+}
+
+function _ycShort(n) {
+  const a = Math.abs(n), sign = n < 0 ? '-' : '';
+  if (a >= 10000) return sign + '$' + Math.round(a / 1000) + 'k';
+  if (a >= 1000)  return sign + '$' + (a / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return sign + '$' + Math.round(a);
+}
+
+function renderYearlyChart() {
+  const yr = _ycYear;
+  document.getElementById('yc-year').textContent = yr;
+  const data = MONTHS.map((name, m) => {
+    const has = monthHasActualData(yr, m);
+    return { name, m, has, val: has ? monthLeftover(yr, m) : 0 };
+  });
+  const withData = data.filter(d => d.has);
+
+  // Geometry
+  const host = document.getElementById('yc-chart');
+  const W = Math.max(280, Math.min(560, host.clientWidth || 500));
+  const narrow = W < 420;
+  const fs = narrow ? 9 : 10;
+  const maxNegPre = Math.max(0, ...withData.map(d => -d.val));
+  const H = narrow ? 210 : 240, padL = 4, padR = 4, padT = 18, padB = 22 + (maxNegPre > 0 ? 16 : 0);
+  const plotH = H - padT - padB;
+  const slot = (W - padL - padR) / 12;
+  const barW = Math.min(30, slot * (narrow ? 0.7 : 0.62));
+  const maxPos = Math.max(0, ...withData.map(d => d.val));
+  const maxNeg = Math.max(0, ...withData.map(d => -d.val));
+  const span = (maxPos + maxNeg) || 1;
+  const zeroY = padT + plotH * (maxPos / span);
+  const scale = plotH / span;
+
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Money left over by month, ' + yr + '" style="display:block;overflow:visible">';
+  // Baseline
+  svg += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + zeroY + '" y2="' + zeroY + '" style="stroke:var(--border)" stroke-width="1"/>';
+  data.forEach(d => {
+    const cx = padL + slot * d.m + slot / 2;
+    const x = cx - barW / 2;
+    const isViewed = (yr === calYear && d.m === calMonth);
+    if (d.has) {
+      const h = Math.max(1.5, Math.abs(d.val) * scale);
+      const y = d.val >= 0 ? zeroY - h : zeroY;
+      const col = d.val >= 0 ? 'var(--income-green)' : 'var(--expense-red)';
+      svg += '<g class="yc-bar" onclick="ycShowMonth(' + d.m + ')"><title>' + d.name + ' ' + yr + ': ' + (d.val < 0 ? '-' : '') + fmt(Math.abs(d.val)) + '</title>' +
+        '<rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + h + '" rx="3" style="fill:' + col + ';opacity:' + (isViewed ? 1 : 0.82) + '"/>' +
+        '<text x="' + cx + '" y="' + (d.val >= 0 ? y - 5 : y + h + fs + 3) + '" text-anchor="middle" style="fill:var(--text);font-family:var(--font-mono);font-size:' + fs + 'px">' + _ycShort(d.val) + '</text></g>';
+    } else {
+      svg += '<g><title>' + d.name + ' ' + yr + ': no actual data yet</title>' +
+        '<rect x="' + x + '" y="' + (zeroY - 1) + '" width="' + barW + '" height="2" rx="1" style="fill:var(--muted);opacity:.35"/></g>';
+    }
+    svg += '<text x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle" style="fill:' + (isViewed ? 'var(--text)' : 'var(--muted)') + ';font-family:var(--font-mono);font-size:' + fs + 'px;font-weight:' + (isViewed ? 700 : 400) + '">' + d.name + '</text>';
+  });
+  svg += '</svg>';
+  document.getElementById('yc-chart').innerHTML = withData.length
+    ? svg
+    : '<div style="padding:40px 0;text-align:center;color:var(--muted);font-size:0.9em">No months with actual data in ' + yr + ' yet.</div>';
+  document.getElementById('yc-detail').textContent = '';
+
+  // Summary
+  const total = withData.reduce((s, d) => s + d.val, 0);
+  const money = n => '<span style="color:' + (n < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + (n < 0 ? '-' : '') + fmt(Math.abs(n)) + '</span>';
+  let best = null, worst = null;
+  withData.forEach(d => { if (!best || d.val > best.val) best = d; if (!worst || d.val < worst.val) worst = d; });
+  const stat = (k, v) => '<div class="yc-stat"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>';
+  document.getElementById('yc-stats').innerHTML = withData.length
+    ? stat('Year total', money(total)) +
+      stat('Monthly average', money(total / withData.length)) +
+      stat('Best month', best.name + ' &middot; ' + money(best.val)) +
+      stat('Toughest month', worst.name + ' &middot; ' + money(worst.val))
+    : '';
 }
 
 // Toggle the Upcoming Payments panel and rotate its chevron
@@ -12453,6 +12555,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 
 <!-- EXPENSE MODAL -->
+<div class="modal-overlay" id="yearly-chart-modal" onclick="closeYearlyChart(event)">
+  <div class="modal">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
+      <h2 style="margin:0">Yearly Left Over</h2>
+      <div class="yc-yearnav">
+        <button onclick="shiftYearlyChart(-1)" aria-label="Previous year">&lsaquo;</button>
+        <span id="yc-year" style="font-family:var(--font-mono);min-width:3em;text-align:center"></span>
+        <button onclick="shiftYearlyChart(1)" aria-label="Next year">&rsaquo;</button>
+      </div>
+    </div>
+    <div style="font-size:0.7857em;color:var(--muted);margin-bottom:14px">Money left over each month (income minus Money Out). Only months with actual data count toward the total.</div>
+    <div id="yc-chart"></div>
+    <div id="yc-detail" style="min-height:1.3em;text-align:center;font-family:var(--font-mono);font-size:0.8571em;color:var(--muted);margin-top:6px"></div>
+    <div class="yc-stats" id="yc-stats"></div>
+    <div class="modal-actions"><button class="btn-secondary" style="flex:1" onclick="closeYearlyChart()">Close</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="expense-modal" onclick="closeExpenseModal(event)">
   <div class="modal">
     <h2 id="exp-modal-title">Edit Expense</h2>
