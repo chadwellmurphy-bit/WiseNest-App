@@ -9284,6 +9284,12 @@ function buildPaymentMap(yr, mo) {
   budget.expenses.forEach(item => {
     if (item.startYr !== undefined && (yr < item.startYr || (yr === item.startYr && mo < item.startMo))) return;
     if (item.endYr !== undefined && (yr > item.endYr || (yr === item.endYr && mo > item.endMo))) return;
+    // The cash-back credit line already shows on the calendar as the reduction on
+    // its linked bill (below), so don't list it a second time.
+    if (item.ccCashBack) {
+      const cbCard = creditCards.find(c => c.id === item.ccCashBackCard);
+      if (cbCard && cbCard.rewardsAppliesTo && budget.expenses.some(e => e.id === cbCard.rewardsAppliesTo)) return;
+    }
     let amt = getExpenseAmountForMonth(item.id, yr, mo);
     // Apply a card's rewards redemption to its designated expense so the calendar
     // shows the net amount actually owing, matching the credit card page.
