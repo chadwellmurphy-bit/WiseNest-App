@@ -566,6 +566,10 @@
     overflow: hidden;
     transition: max-height 0.3s ease;
   }
+  .cc-ov-bar { display:flex; height:10px; border-radius:5px; overflow:hidden; background:var(--surface2); margin:4px 20px 0; }
+  .cc-ov-bar > div { height:100%; transition:width .3s; }
+  .cc-ov-legend { display:flex; flex-wrap:wrap; gap:6px 16px; padding:10px 20px 18px; font-family:var(--font-mono); font-size:0.7857em; color:var(--muted); }
+  .cc-ov-legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
   .cc-sum { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; font-family:var(--font-mono); font-size:0.7857em; }
   .cc-sum .k { color:var(--muted); margin-right:5px; }
   .cc-card .section-chevron { transition: transform .2s; }
@@ -1987,6 +1991,9 @@
   }
   @media (max-width: 600px) {
     .rogers-meters { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 600px) {
+    #cc-overview .rogers-meter:last-child, .cc-card .rogers-meter:last-child { grid-column: span 2; }
   }
   .rogers-meter {
     background: var(--surface2);
@@ -10452,36 +10459,14 @@ function setCCActual(cardId, yr, mo, val) {
 function updateActualSpendRow(cardId) {
   const card = creditCards.find(c => c.id === cardId);
   if (!card) return;
-  const yr = calYear, mo = calMonth;
-  const actual = getCCActual(cardId, yr, mo);
-
-  // Total card budget from the shared model (matches the tiles & render function).
-  const cardBudget = computeCardMetrics(card, yr, mo).cardBudget;
-
-  const sectionId = 'cc-section-' + cardId;
   const row = document.getElementById('cc-actual-row-' + cardId);
   if (!row) return;
-
-  // Compare actual vs "Total Card Budget" — the max you could put on the card.
-  const budgetRef = Math.max(0, cardBudget);
-  let diffHtml = '';
-  if (actual !== null) {
-    const diff = actual - budgetRef;
-    const over = diff > 0;
-    const diffFmt = (over ? '+' : '') + fmt(Math.abs(diff));
-    const diffColor = over ? 'var(--expense-red)' : 'var(--income-green)';
-    const label = over ? 'over budget' : 'under budget';
-    diffHtml = `<span style="font-size:0.78em;font-family:var(--font-mono);color:${diffColor};margin-left:10px">${diffFmt} ${label}</span>`;
-  }
-
+  const actual = getCCActual(cardId, calYear, calMonth);
   const amtHtml = actual !== null
-    ? `<span style="font-family:var(--font-serif);font-size:1.25em;letter-spacing:-.02em;color:var(--text)">${fmt(actual)}</span>${diffHtml}`
+    ? `<span style="font-family:var(--font-serif);font-size:1.25em;letter-spacing:-.02em;color:var(--text)">${fmt(actual)}</span>`
     : `<span style="font-family:var(--font-mono);font-size:0.82em;color:var(--muted)">not entered yet</span>`;
-
   const amtCell = row.querySelector('.cc-actual-amt');
   if (amtCell) amtCell.innerHTML = amtHtml;
-  const subEl = document.getElementById('cc-actual-sub-' + cardId);
-  if (subEl) subEl.innerHTML = 'Enter when your ' + MONTHS[mo] + ' statement is available &middot; total card budget: ' + fmt(budgetRef);
 }
 
 // Build just the inner charges list HTML for a card — used both by full render
@@ -10727,6 +10712,71 @@ function computeCardMetrics(card, yr, mo) {
   };
 }
 
+// Colour used for each card in the overview bar
+const CC_COLORS = ['var(--accent2)', 'var(--accent)', '#b48cff', '#ffb347', '#4dd4e6'];
+function ccColor(i) { return CC_COLORS[i % CC_COLORS.length]; }
+
+// Household-level picture across all cards (one shared budget)
+function computeCardsOverview(yr, mo) {
+  if (!creditCards.length) return null;
+  const base = computeCardMetrics(creditCards[0], yr, mo);
+  const per = creditCards.map((c, i) => {
+    const r = _cardEffectiveRecurring(c, yr, mo);
+    const stmt = cardStatementBalance(c, yr, mo);
+    return { card: c, i, stmt, recurring: r.effectiveRecurring, other: Math.max(0, stmt - r.effectiveRecurring) };
+  });
+  const totalRecurring = per.reduce((s, x) => s + x.recurring, 0);
+  const totalBalance = per.reduce((s, x) => s + x.stmt, 0);
+  const budget = base.leftover + totalRecurring;
+  const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
+  const prevBalance = creditCards.reduce((s, c) => s + cardStatementBalance(c, prevYr, prevMo), 0);
+  return { leftover: base.leftover, totalRecurring, totalBalance, prevBalance, budget, remaining: budget - totalBalance, per };
+}
+
+function _ccChangeHtml(cur, prev, emptyText) {
+  if (!(prev > 0)) return '<span style="color:var(--muted)">' + emptyText + '</span>';
+  const d = cur - prev, up = d >= 0;
+  return 'vs last month: <span style="color:' + (up ? 'var(--expense-red)' : 'var(--income-green)') + '">' +
+    (up ? '▲' : '▼') + ' ' + fmt(Math.abs(d)) + ' (' + Math.round(Math.abs(d / prev) * 100) + '%)</span>';
+}
+
+function cardsOverviewInnerHtml(yr, mo) {
+  const o = computeCardsOverview(yr, mo);
+  if (!o) return '';
+  const rem = o.remaining;
+  const tiles =
+    '<div class="rogers-meters" style="padding:16px 20px 10px;grid-template-columns:repeat(3, 1fr);margin-bottom:0">' +
+      '<div class="rogers-meter"><div class="rm-label">Card budget</div>' +
+        '<div class="rm-value">' + fmt(Math.max(0, o.budget)) + '</div>' +
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">leftover + recurring</div></div>' +
+      '<div class="rogers-meter"><div class="rm-label">Total balance</div>' +
+        '<div class="rm-value">' + fmt(o.totalBalance) + '</div>' +
+        '<div style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">' + _ccChangeHtml(o.totalBalance, o.prevBalance, 'all cards this month') + '</div></div>' +
+      '<div class="rogers-meter"><div class="rm-label">Budget balance</div>' +
+        '<div class="rm-value" style="color:' + (rem >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' + (rem >= 0 ? '+' : '-') + fmt(Math.abs(rem)) + '</div>' +
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (rem >= 0 ? 'left to spend' : 'over budget') + '</div></div>' +
+    '</div>';
+  // Bar: each card's balance as a share of the budget (or of total spend when over)
+  const scale = Math.max(o.budget, o.totalBalance) || 1;
+  let bar = '<div class="cc-ov-bar">';
+  o.per.forEach(x => { if (x.stmt > 0) bar += '<div title="' + escHtml(x.card.name) + ': ' + fmt(x.stmt) + '" style="width:' + (x.stmt / scale * 100) + '%;background:' + ccColor(x.i) + '"></div>'; });
+  if (rem < 0) bar += '<div title="Over budget" style="width:0"></div>';
+  bar += '</div>';
+  const overMark = rem < 0 && o.budget > 0
+    ? '<div style="position:relative;margin:0 20px;height:0"><div style="position:absolute;left:' + (o.budget / scale * 100) + '%;top:-12px;width:2px;height:14px;background:var(--expense-red)" title="Budget limit"></div></div>'
+    : '';
+  const legend = '<div class="cc-ov-legend">' +
+    o.per.map(x => '<span><i style="background:' + ccColor(x.i) + '"></i>' + escHtml(x.card.name) + ' <span style="color:var(--text)">' + fmt(x.stmt) + '</span></span>').join('') +
+    (rem < 0 ? '<span style="color:var(--expense-red)">| budget limit ' + fmt(Math.max(0, o.budget)) + '</span>' : '') +
+    '</div>';
+  return tiles + bar + overMark + legend;
+}
+
+function updateCardsOverview() {
+  const el = document.getElementById('cc-overview-inner');
+  if (el) el.innerHTML = cardsOverviewInnerHtml(calYear, calMonth);
+}
+
 function cardBudgetSubLabel(m) {
   return m.otherCardsSpend > 0 ? 'leftover + recurring \u2212 other cards' : 'leftover + recurring';
 }
@@ -10737,11 +10787,10 @@ var _ccOpen;
 function ccOpenSet() { return _ccOpen || (_ccOpen = new Set()); }
 
 function cardSummaryHtml(card, m) {
-  const bb = m.budgetBalance;
+  const other = Math.max(0, m.stmtBalance - m.effectiveRecurring);
   return '<span><span class="k">Balance</span><span style="color:var(--text)">' + fmt(m.stmtBalance) + '</span></span>' +
-    '<span><span class="k">Budget</span><span style="color:var(--text)">' + fmt(Math.max(0, m.cardBudget)) + '</span></span>' +
-    '<span style="color:' + (bb >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' +
-      (bb >= 0 ? '+' : '-') + fmt(Math.abs(bb)) + (bb >= 0 ? ' under' : ' over') + '</span>';
+    '<span><span class="k">Recurring</span><span style="color:var(--text)">' + fmt(m.effectiveRecurring) + '</span></span>' +
+    '<span><span class="k">Other</span><span style="color:var(--text)">' + fmt(other) + '</span></span>';
 }
 
 function ccToggleCard(id) {
@@ -10770,6 +10819,7 @@ function ccToggleCard(id) {
 // Refresh the tiles of every card (spending on one card changes what's left for the others)
 function refreshAllCardMetrics() {
   creditCards.forEach(c => { updateCardMetrics(c.id); updateActualSpendRow(c.id); });
+  updateCardsOverview();
 }
 
 // Total statement balance for a card in a given month.
@@ -11681,6 +11731,13 @@ function renderCreditCardsPage() {
   if (!container) return;
 
   let html = '';
+  if (creditCards.length) {
+    html += '<div class="section" style="margin-bottom:20px" id="cc-overview">' +
+      '<div class="section-header" style="cursor:default"><div class="section-title">' +
+        '<div class="section-dot" style="background:var(--accent2)"></div>' +
+        (creditCards.length > 1 ? 'All cards' : 'Card budget') + '</div></div>' +
+      '<div id="cc-overview-inner">' + cardsOverviewInnerHtml(calYear, calMonth) + '</div></div>';
+  }
   creditCards.forEach((card, idx) => {
     const cardId = 'cc-section-' + card.id;
   
@@ -11779,14 +11836,7 @@ function renderCreditCardsPage() {
     // Compare vs "Total Card Budget" (leftover + net recurring) — the max you could put
     // on the card. This is the tile the under/over-budget figure now references.
     const _budgetRef = Math.max(0, cardBudget);
-    let _diffHtml = '';
-    if (_actual !== null) {
-      const _diff  = _actual - _budgetRef;
-      const _over  = _diff > 0;
-      const _dColor = _over ? 'var(--expense-red)' : 'var(--income-green)';
-      const _dLabel = (_over ? '+' : '') + fmt(Math.abs(_diff)) + (_over ? ' over budget' : ' under budget');
-      _diffHtml = '<span style="font-size:0.78em;font-family:var(--font-mono);color:' + _dColor + ';margin-left:10px">' + _dLabel + '</span>';
-    }
+    const _diffHtml = '';
     const _amtDisplay = _actual !== null
       ? '<span style="font-family:var(--font-serif);font-size:1.25em;letter-spacing:-.02em;color:var(--text)">' + fmt(_actual) + '</span>' + _diffHtml
       : '<span style="font-family:var(--font-mono);font-size:0.82em;color:var(--muted)">not entered yet</span>';
@@ -11798,7 +11848,7 @@ function renderCreditCardsPage() {
               '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1"/><path d="M1 7h14"/><path d="M5 11h2"/><path d="M9 11h2"/></svg>' +
               ' Actual Statement Total' +
             '</div>' +
-            '<div id="cc-actual-sub-' + card.id + '" style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">Enter when your ' + MONTHS_SHORT[mo] + ' statement is available &middot; total card budget: ' + fmt(_budgetRef) + '</div>' +
+            '<div id="cc-actual-sub-' + card.id + '" style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">Enter when your ' + MONTHS_SHORT[mo] + ' statement is available</div>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px">' +
             '<div class="cc-actual-amt" style="display:flex;align-items:center;min-width:120px;justify-content:flex-end">' + _amtDisplay + '</div>' +
@@ -11840,24 +11890,20 @@ function renderCreditCardsPage() {
         <!-- Meters -->
         <div class="rogers-meters" style="padding:16px 20px;border-bottom:1px solid var(--border);grid-template-columns:repeat(3, 1fr)">
           <div class="rogers-meter">
-            <div class="rm-label">Total card budget</div>
-            <div class="rm-value">${fmt(Math.max(0, cardBudget))}</div>
-            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${cardBudgetSubLabel(_m)}</div>
-          </div>
-          <div class="rogers-meter">
             <div class="rm-label">Monthly balance</div>
             <div class="rm-value" style="color:var(--text)">${fmt(_stmtBalance)}</div>
             <div class="rm-sub" style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">${_stmtChangeHtml}</div>
           </div>
           <div class="rogers-meter">
-            <div class="rm-label">Budget balance</div>
-            <div class="rm-value" style="color:${_budgetBalance >= 0 ? 'var(--income-green)' : 'var(--expense-red)'}">${(_budgetBalance >= 0 ? '+' : '-') + fmt(Math.abs(_budgetBalance))}</div>
-            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_budgetBalance >= 0 ? 'under budget' : 'over budget'}</div>
+            <div class="rm-label">Recurring</div>
+            <div class="rm-value">${fmt(effectiveRecurring)}</div>
+            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${cashBack > 0 ? 'bills, after cash back' : 'bills on this card'}</div>
           </div>
-        </div>
-        <!-- Progress bar -->
-        <div class="rogers-progress-bar" style="margin:0 20px 0;border-radius:0">
-          <div class="rogers-progress-fill ${usedPct>=100?' over':usedPct>=80?' warn':''}" style="width:${usedPct}%"></div>
+          <div class="rogers-meter">
+            <div class="rm-label">Other spending</div>
+            <div class="rm-value">${fmt(Math.max(0, _stmtBalance - effectiveRecurring))}</div>
+            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_actual !== null ? 'beyond recurring' : 'enter statement below'}</div>
+          </div>
         </div>
         <!-- Charges list -->
         <div class="rogers-charges-list" style="padding:16px 20px">
@@ -12204,29 +12250,17 @@ function updateCardMetrics(cardId) {
   const body = document.getElementById('cc-section-' + card.id + '-body');
   if (!body) return;
 
-  // Tiles: [0] Total card budget, [1] Monthly balance, [2] Budget balance
+  // Tiles: [0] Monthly balance, [1] Recurring, [2] Other spending
   const tiles = body.querySelectorAll('.rogers-meter');
   const val = i => tiles[i] && tiles[i].querySelector('.rm-value');
   const sub = i => tiles[i] && tiles[i].querySelector('.rm-sub');
-  if (val(0)) val(0).textContent = fmt(Math.max(0, m.cardBudget));
-  if (sub(0)) sub(0).textContent = cardBudgetSubLabel(m);
-  if (val(1)) val(1).textContent = fmt(m.stmtBalance);
-  if (sub(1)) {
-    const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
-    const prev = cardStatementBalance(card, prevYr, prevMo);
-    if (prev > 0) {
-      const d = m.stmtBalance - prev, up = d >= 0;
-      sub(1).innerHTML = 'vs last month: <span style="color:' + (up ? 'var(--expense-red)' : 'var(--income-green)') + '">' +
-        (up ? '▲' : '▼') + ' ' + fmt(Math.abs(d)) + ' (' + Math.round(Math.abs(d / prev) * 100) + '%)</span>';
-    } else {
-      sub(1).innerHTML = '<span style="color:var(--muted)">total statement balance</span>';
-    }
-  }
-  if (val(2)) {
-    val(2).textContent = (m.budgetBalance >= 0 ? '+' : '-') + fmt(Math.abs(m.budgetBalance));
-    val(2).style.color = m.budgetBalance >= 0 ? 'var(--income-green)' : 'var(--expense-red)';
-  }
-  if (sub(2)) sub(2).textContent = m.budgetBalance >= 0 ? 'under budget' : 'over budget';
+  const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
+  if (val(0)) val(0).textContent = fmt(m.stmtBalance);
+  if (sub(0)) sub(0).innerHTML = _ccChangeHtml(m.stmtBalance, cardStatementBalance(card, prevYr, prevMo), 'total statement balance');
+  if (val(1)) val(1).textContent = fmt(m.effectiveRecurring);
+  if (sub(1)) sub(1).textContent = m.cashBack > 0 ? 'bills, after cash back' : 'bills on this card';
+  if (val(2)) val(2).textContent = fmt(Math.max(0, m.stmtBalance - m.effectiveRecurring));
+  if (sub(2)) sub(2).textContent = m.actual !== null ? 'beyond recurring' : 'enter statement below';
 
   // Progress bar
   const bar = body.querySelector('.rogers-progress-fill');
