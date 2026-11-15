@@ -9250,7 +9250,7 @@ function buildPaymentMap(yr, mo) {
     // Apply a card's rewards redemption to its designated expense so the calendar
     // shows the net amount actually owing, matching the credit card page.
     let appliedCashBack = 0;
-    const rwCard = creditCards.find(c => cardHasRewards(c) && c.rewardsAppliesTo === item.id);
+    const rwCard = creditCards.find(c => cardHasRewards(c) && !cardRewardsAccrue(c) && c.rewardsAppliesTo === item.id);
     if (rwCard) {
       const cashBack = getCardRewards(rwCard.id, yr, mo);
       if (cashBack > 0) { appliedCashBack = Math.min(cashBack, amt); amt = Math.max(0, amt - cashBack); }
@@ -10392,9 +10392,23 @@ function setCardRewards(cardId, val) {
   renderCreditCardsPage();
 }
 
-// Convenience: rewards for a card object in a month (0 when disabled)
+// Is this card's reward paid out later (e.g. once a year) rather than redeemed
+// against the balance each month? Those rewards are tracked only.
+function cardRewardsAccrue(card) {
+  return !!(card && card.rewardsEnabled && card.rewardsMode === 'accrued');
+}
+
+// Rewards earned on this card from January through the given month
+function cardRewardsYTD(card, yr, uptoMo) {
+  let t = 0;
+  for (let m = 0; m <= uptoMo; m++) t += getCardRewards(card.id, yr, m) || 0;
+  return t;
+}
+
+// Convenience: rewards that REDUCE what's owed this month (0 when disabled or
+// when the card only accrues rewards for a later payout)
 function cardRewardsFor(card, yr, mo) {
-  return cardHasRewards(card) ? getCardRewards(card.id, yr, mo) : 0;
+  return (cardHasRewards(card) && !cardRewardsAccrue(card)) ? getCardRewards(card.id, yr, mo) : 0;
 }
 
 function escHtml(s) {
@@ -11771,16 +11785,18 @@ function renderCreditCardsPage() {
             <div>
               <div style="font-size:0.8571em;font-weight:600;color:var(--accent);display:flex;align-items:center;gap:6px">
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M6 8l2 2 3-3"/></svg>
-                ${cardRewardsLabel(card) === 'points' ? 'Points Redemption' : 'Cash Back Redemption'}
+                ${cardRewardsAccrue(card)
+                    ? (cardRewardsLabel(card) === 'points' ? 'Points Earned' : 'Cash Back Earned')
+                    : (cardRewardsLabel(card) === 'points' ? 'Points Redemption' : 'Cash Back Redemption')}
               </div>
-              <div style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${(function(){var t=card.rewardsAppliesTo?budget.expenses.find(function(e){return e.id===card.rewardsAppliesTo;}):null; return t? "Applied to "+escapeHtml(t.name)+" this month" : "Redeemed this month";})()}</div>
+              <div id="cashback-sub-${card.id}" style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${cardRewardsSubText(card)}</div>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-size:0.8571em;color:var(--muted);font-family:var(--font-mono)">$</span>
               <input
                 id="cashback-input-${card.id}"
                 type="number" min="0" placeholder="0"
-                value="${cashBack > 0 ? cashBack : ''}"
+                value="${getCardRewards(card.id, yr, mo) > 0 ? getCardRewards(card.id, yr, mo) : ''}"
                 style="width:80px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-family:var(--font-mono);font-size:1em;font-weight:600;padding:5px 8px;text-align:right;outline:none;transition:border-color .15s"
                 onfocus="this.style.borderColor='var(--accent)'"
                 onblur="this.style.borderColor='var(--border)'"
@@ -12004,6 +12020,19 @@ function setCashBack(cardId, val) {
   // (re-rendering destroys focus and the typed value)
   updateCardMetrics(cardId);
   updateChargesList(cardId);
+  const sub = document.getElementById('cashback-sub-' + cardId);
+  if (sub && card) sub.innerHTML = cardRewardsSubText(card);
+}
+
+// Line under the rewards heading on the card page
+function cardRewardsSubText(card) {
+  if (cardRewardsAccrue(card)) {
+    const ytd = cardRewardsYTD(card, calYear, calMonth);
+    return 'Earned this month &middot; $' + ytd.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+      ' so far in ' + calYear + ' &middot; paid out yearly';
+  }
+  const t = card.rewardsAppliesTo ? budget.expenses.find(e => e.id === card.rewardsAppliesTo) : null;
+  return t ? 'Applied to ' + escapeHtml(t.name) + ' this month' : 'Redeemed this month';
 }
 
 // ── Cash back → Money Out ──
@@ -12175,6 +12204,14 @@ function onCardRewardsToggle() {
   const on = document.getElementById('add-card-rewards').checked;
   const box = document.getElementById('add-card-rewards-fields');
   if (box) box.style.display = on ? '' : 'none';
+  const modeSel = document.getElementById('add-card-rewards-mode');
+  const accrued = modeSel && modeSel.value === 'accrued';
+  const wrap = document.getElementById('add-card-rewards-applies-wrap');
+  if (wrap) wrap.style.display = accrued ? 'none' : '';
+  const hint = document.getElementById('add-card-rewards-mode-hint');
+  if (hint) hint.textContent = accrued
+    ? 'Log what you earn each month. It builds a running yearly total and does not reduce your balance or Money Out.'
+    : 'Each month\u2019s redemption is credited in Money Out and lowers what you owe.';
 }
 
 // Populate the "apply to bill" dropdown with expenses charged to this card
@@ -12231,6 +12268,7 @@ function openAddCardModal() {
   clearCardLogo();
   document.getElementById('add-card-rewards').checked = false;
   document.getElementById('add-card-rewards-type').value = 'cashback';
+  document.getElementById('add-card-rewards-mode').value = 'redeemed';
   populateRewardsAppliesTo(null, '');
   onCardRewardsToggle();
   document.getElementById('add-card-delete-btn').style.display = 'none';
@@ -12252,6 +12290,7 @@ function openEditCardModal(cardId) {
   showCardLogoPreview(cardModalLogoData);
   document.getElementById('add-card-rewards').checked = !!card.rewardsEnabled;
   document.getElementById('add-card-rewards-type').value = card.rewardsType || 'cashback';
+  document.getElementById('add-card-rewards-mode').value = card.rewardsMode === 'accrued' ? 'accrued' : 'redeemed';
   populateRewardsAppliesTo(card, card.rewardsAppliesTo || '');
   onCardRewardsToggle();
   document.getElementById('add-card-delete-btn').style.display = '';
@@ -12273,8 +12312,10 @@ function saveAddCardModal() {
   const bal    = balRaw !== '' ? parseFloat(balRaw) : undefined;
   const rewardsEnabled   = document.getElementById('add-card-rewards').checked;
   const rewardsType      = document.getElementById('add-card-rewards-type').value || 'cashback';
-  const rewardsAppliesTo = document.getElementById('add-card-rewards-applies').value || '';
+  const rewardsMode      = document.getElementById('add-card-rewards-mode').value === 'accrued' ? 'accrued' : 'redeemed';
+  const rewardsAppliesTo = rewardsMode === 'accrued' ? '' : (document.getElementById('add-card-rewards-applies').value || '');
   if (!name) { document.getElementById('add-card-name').focus(); return; }
+  pushUndo();
 
   if (_editCardId !== null) {
     // Editing existing card
@@ -12288,7 +12329,8 @@ function saveAddCardModal() {
       card.rewardsEnabled    = rewardsEnabled;
       card.rewardsType       = rewardsType;
       card.rewardsAppliesTo  = rewardsAppliesTo;
-      if (rewardsEnabled) syncAllCashBackExpenses(card.id);
+      card.rewardsMode       = rewardsMode;
+      if (rewardsEnabled && rewardsMode !== 'accrued') syncAllCashBackExpenses(card.id);
       else removeCashBackExpense(card.id);
       if (card.otherChargesAutoAdd) syncAllOtherChargesExpenses(card.id);
       if (balRaw !== '' && !isNaN(bal)) {
@@ -12303,7 +12345,7 @@ function saveAddCardModal() {
     // Adding new card
     const id = 'card_' + Date.now();
     const newCard = { id, name, expenseSource: source || id, statementDayStart: stmtStart, statementDayEnd: stmtEnd,
-                      rewardsEnabled, rewardsType, rewardsAppliesTo };
+                      rewardsEnabled, rewardsType, rewardsMode, rewardsAppliesTo };
     if (cardModalLogoData) newCard.logo = cardModalLogoData;
     if (balRaw !== '' && !isNaN(bal)) {
       newCard.currentBalance = bal;
@@ -13335,7 +13377,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     <div class="setting-row" style="padding:10px 0;border:none">
       <div style="flex:1">
         <div class="setting-label" style="font-size:0.92em">Cash back / points</div>
-        <div class="setting-sub">Track rewards redeemed against this card</div>
+        <div class="setting-sub">Track cash back or points earned on this card</div>
       </div>
       <label class="toggle" style="flex-shrink:0">
         <input type="checkbox" id="add-card-rewards" onchange="onCardRewardsToggle()">
@@ -13351,6 +13393,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         </select>
       </div>
       <div class="form-field">
+        <label>How it's paid out</label>
+        <select id="add-card-rewards-mode" onchange="onCardRewardsToggle()" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-sans);font-size:1.0em;padding:10px 12px;-webkit-appearance:none">
+          <option value="redeemed">Redeemed against the balance monthly</option>
+          <option value="accrued">Paid out later (e.g. yearly) &mdash; just track it</option>
+        </select>
+        <div id="add-card-rewards-mode-hint" style="font-size:0.7857em;color:var(--muted);font-family:var(--font-mono);margin-top:6px"></div>
+      </div>
+      <div class="form-field" id="add-card-rewards-applies-wrap">
         <label>Apply to bill <span style="color:var(--muted);font-size:0.85em">optional</span></label>
         <select id="add-card-rewards-applies" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-sans);font-size:1.0em;padding:10px 12px;-webkit-appearance:none"></select>
         <div style="font-size:0.7857em;color:var(--muted);font-family:var(--font-mono);margin-top:6px">Rewards are deducted from this bill, so you see the net amount owing.</div>
