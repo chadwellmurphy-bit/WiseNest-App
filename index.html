@@ -1158,6 +1158,16 @@
   }
   .modal-overlay.open .modal { transform: translateY(0) scale(1); }
   #yearly-chart-modal .modal, #debt-chart-modal .modal { width: 560px; }
+  .rw-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .rw-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  .rw-name { font-weight:600; }
+  .rw-ytd { font-family:var(--font-serif); font-size:1.35em; color:var(--accent); letter-spacing:-.02em; }
+  .rw-meta { font-family:var(--font-mono); font-size:0.7143em; color:var(--muted); margin-top:2px; }
+  .rw-months { display:grid; grid-template-columns:repeat(6, 1fr); gap:4px; margin-top:10px; }
+  .rw-m { text-align:center; font-family:var(--font-mono); font-size:0.7143em; color:var(--muted); background:var(--surface); border-radius:6px; padding:5px 2px; }
+  .rw-m b { display:block; color:var(--text); font-weight:500; margin-top:2px; }
+  .rw-m.zero b { color:var(--muted); opacity:.5; }
+  .rw-total { display:flex; justify-content:space-between; align-items:baseline; padding:10px 4px 0; border-top:1px solid var(--border); margin-top:4px; }
   .dc-row { display:flex; justify-content:space-between; gap:12px; padding:4px 0; border-bottom:1px solid var(--border); font-size:0.8571em; }
   .dc-row:last-child { border-bottom:none; }
   .yc-stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:16px; }
@@ -10771,9 +10781,9 @@ function cardsOverviewInnerHtml(yr, mo) {
   const rwCards = creditCards.filter(c => cardHasRewards(c));
   const rwYTD = rwCards.reduce((t, c) => t + cardRewardsYTD(c, yr, mo), 0);
   const rewardsTile = rwCards.length
-    ? '<div class="rogers-meter"><div class="rm-label">Rewards ' + yr + '</div>' +
+    ? '<div class="rogers-meter" style="cursor:pointer" onclick="openRewardsBreakdown()" title="See each card"><div class="rm-label">Rewards ' + yr + '</div>' +
         '<div class="rm-value" style="color:var(--accent)">' + fmt(rwYTD) + '</div>' +
-        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">earned Jan\u2013' + MONTHS[mo] + '</div></div>'
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">earned Jan\u2013' + MONTHS[mo] + ' &rsaquo;</div></div>'
     : '';
   const tiles =
     '<div class="rogers-meters cc-ov-tiles' + (rewardsTile ? ' four' : '') + '" style="padding:16px 20px 18px;margin-bottom:0">' +
@@ -10789,6 +10799,38 @@ function cardsOverviewInnerHtml(yr, mo) {
       rewardsTile +
     '</div>';
   return tiles;
+}
+
+// ── Rewards breakdown (tap the Rewards tile) ──
+function openRewardsBreakdown() {
+  const yr = calYear, mo = calMonth;
+  const cards = creditCards.filter(c => cardHasRewards(c));
+  const money = n => '$' + n.toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  document.getElementById('rw-title').textContent = 'Rewards ' + yr;
+  document.getElementById('rw-sub').textContent = 'Earned January to ' + ['January','February','March','April','May','June','July','August','September','October','November','December'][mo] + ', by card.';
+  let total = 0;
+  const html = cards.map(c => {
+    const ytd = cardRewardsYTD(c, yr, mo);
+    total += ytd;
+    const kind = cardRewardsLabel(c) === 'points' ? 'Points' : 'Cash back';
+    const how = cardRewardsAccrue(c) ? 'paid out yearly, not yet applied' : 'redeemed against the balance';
+    let months = '';
+    for (let m = 0; m <= mo; m++) {
+      const v = getCardRewards(c.id, yr, m) || 0;
+      months += '<div class="rw-m' + (v ? '' : ' zero') + '">' + MONTHS[m] + '<b>' + (v ? (v % 1 ? '$' + v.toFixed(2) : fmt(v)) : '–') + '</b></div>';
+    }
+    return '<div class="rw-card"><div class="rw-head"><div><div class="rw-name">' + escHtml(c.name) + '</div>' +
+      '<div class="rw-meta">' + kind + ' &middot; ' + how + '</div></div>' +
+      '<div class="rw-ytd">' + money(ytd) + '</div></div>' +
+      '<div class="rw-months">' + months + '</div></div>';
+  }).join('');
+  document.getElementById('rw-body').innerHTML = (html || '<div style="color:var(--muted)">No cards have rewards turned on.</div>') +
+    (cards.length > 1 ? '<div class="rw-total"><span style="color:var(--muted)">Total</span><span class="rw-ytd">' + money(total) + '</span></div>' : '');
+  document.getElementById('rewards-modal').classList.add('open');
+}
+function closeRewardsBreakdown(e) {
+  if (e && e.target !== document.getElementById('rewards-modal')) return;
+  document.getElementById('rewards-modal').classList.remove('open');
 }
 
 function updateCardsOverview() {
@@ -12906,6 +12948,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 
 <!-- EXPENSE MODAL -->
+<div class="modal-overlay" id="rewards-modal" onclick="closeRewardsBreakdown(event)">
+  <div class="modal">
+    <h2 id="rw-title" style="margin-bottom:6px">Rewards</h2>
+    <div id="rw-sub" style="font-size:0.7857em;color:var(--muted);margin-bottom:16px"></div>
+    <div id="rw-body"></div>
+    <div class="modal-actions"><button class="btn-secondary" style="flex:1" onclick="closeRewardsBreakdown()">Close</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="debt-chart-modal" onclick="closeDebtChart(event)">
   <div class="modal">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
