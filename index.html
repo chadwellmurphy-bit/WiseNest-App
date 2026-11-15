@@ -10707,6 +10707,10 @@ function _cardEffectiveRecurring(card, yr, mo) {
 
 // Spending on a card beyond its recurring bills (only known once a statement is entered)
 function cardDiscretionarySpend(card, yr, mo) {
+  if (cardBalanceStatus(card, yr, mo) === 'current') {
+    const pr = cardProjection(card, yr, mo);
+    return Math.max(0, pr.balance - pr.posted);
+  }
   return Math.max(0, cardStatementBalance(card, yr, mo) - _cardEffectiveRecurring(card, yr, mo).effectiveRecurring);
 }
 
@@ -10749,7 +10753,7 @@ function computeCardsOverview(yr, mo) {
   const per = creditCards.map((c, i) => {
     const r = _cardEffectiveRecurring(c, yr, mo);
     const stmt = cardStatementBalance(c, yr, mo);
-    return { card: c, i, stmt, status: cardBalanceStatus(c, yr, mo), recurring: r.effectiveRecurring, grossRecurring: r.recurringTotal, other: Math.max(0, stmt - r.effectiveRecurring) };
+    return { card: c, i, stmt, status: cardBalanceStatus(c, yr, mo), recurring: r.effectiveRecurring, grossRecurring: r.recurringTotal, other: cardDiscretionarySpend(c, yr, mo) };
   });
   const totalRecurring = per.reduce((s, x) => s + x.recurring, 0);
   const totalBalance = per.reduce((s, x) => s + x.stmt, 0);
@@ -10773,10 +10777,10 @@ function cardsOverviewInnerHtml(yr, mo) {
   const o = computeCardsOverview(yr, mo);
   if (!o) return '';
   const rem = o.remaining;
-  const nProj = o.per.filter(x => x.status === 'projected').length;
+  const nProj = o.per.filter(x => x.status === 'current').length;
   const nFinal = o.per.filter(x => x.status === 'final').length;
   const allFinal = nFinal === o.per.length;
-  const balLabel = allFinal ? 'Final balance' : nProj ? 'Projected balance' : 'Total balance';
+  const balLabel = allFinal ? 'Final balance' : nProj ? 'Current balance' : 'Total balance';
   // Rewards earned so far this year across every card with rewards
   const rwCards = creditCards.filter(c => cardHasRewards(c));
   const rwYTD = rwCards.reduce((t, c) => t + cardRewardsYTD(c, yr, mo), 0);
@@ -10792,10 +10796,10 @@ function cardsOverviewInnerHtml(yr, mo) {
         '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (o.free < 0 ? '-' : '') + fmt(Math.abs(o.free)) + ' free + ' + fmt(o.totalRecurring) + ' card bills</div></div>' +
       '<div class="rogers-meter"><div class="rm-label">' + balLabel + '</div>' +
         '<div class="rm-value">' + fmt(o.totalBalance) + '</div>' +
-        '<div style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">' + _ccChangeHtml(o.totalBalance, o.prevBalance, 'all cards this month') + '</div></div>' +
+        '<div style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">' + (nProj ? '<span style="color:var(--muted)">all cards, so far</span>' : _ccChangeHtml(o.totalBalance, o.prevBalance, 'all cards this month')) + '</div></div>' +
       '<div class="rogers-meter"><div class="rm-label">Budget balance</div>' +
         '<div class="rm-value" style="color:' + (rem >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' + (rem >= 0 ? '+' : '-') + fmt(Math.abs(rem)) + '</div>' +
-        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (rem >= 0 ? 'left to spend' : 'over budget') + (allFinal ? '' : nProj ? ' (projected)' : ' (estimated)') + '</div></div>' +
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (rem >= 0 ? 'left to spend' : 'over budget') + (allFinal ? '' : nProj ? ' so far' : ' (estimated)') + '</div></div>' +
       rewardsTile +
     '</div>';
   return tiles;
@@ -10925,42 +10929,47 @@ function cardProjection(card, yr, mo) {
       const billDate = new Date(by, bm, Math.min(d === 999 ? 31 : d, new Date(by, bm + 1, 0).getDate()));
       if (billDate > asOf) upcoming += amt; else posted += amt;
     });
+  // The balance is used as-is: no extrapolation (early in a cycle a pace
+  // estimate swings wildly). Bills still to come are reported, not added.
   const balance = card.currentBalance;
-  const spentSoFar = Math.max(0, balance - posted);
-  const pace = elapsed > 0 ? spentSoFar / elapsed : 0;
-  const paceExtra = pace * remainingDays;
-  return {
-    balance, asOf: card.currentBalanceAsOf, upcoming, paceExtra, remainingDays,
-    projected: balance + upcoming + paceExtra,
-  };
+  return { balance, asOf: card.currentBalanceAsOf, posted, upcoming, remainingDays };
 }
 
-// 'final' (statement entered), 'projected' (from a mid-cycle balance) or
+// 'final' (statement entered), 'current' (balance so far this cycle) or
 // 'estimate' (recurring bills only)
 function cardBalanceStatus(card, yr, mo) {
   if (getCCActual(card.id, yr, mo) !== null) return 'final';
-  if (cardProjection(card, yr, mo)) return 'projected';
+  if (cardProjection(card, yr, mo)) return 'current';
   return 'estimate';
 }
-const CC_STATUS_LABEL = { final: 'final', projected: 'projected', estimate: 'est.' };
+const CC_STATUS_LABEL = { final: 'final', current: 'current', estimate: 'est.' };
 function ccStatusTag(st) {
-  const c = st === 'final' ? 'var(--income-green)' : st === 'projected' ? 'var(--accent2)' : 'var(--muted)';
+  const c = st === 'final' ? 'var(--income-green)' : st === 'current' ? 'var(--accent2)' : 'var(--muted)';
   return '<span style="font-size:0.85em;color:' + c + ';border:1px solid ' + c + ';border-radius:4px;padding:0 4px;margin-left:5px;opacity:.9">' + CC_STATUS_LABEL[st] + '</span>';
 }
 
 // Total statement balance for a card in a given month: the actual statement if
-// entered, else a projection from the current balance, else net recurring.
+// entered, else the current balance so far, else net recurring.
 function cardStatementBalance(card, yr, mo) {
   const actual = getCCActual(card.id, yr, mo);
   if (actual !== null) return actual;
   const proj = cardProjection(card, yr, mo);
-  if (proj) return proj.projected;
+  if (proj) return proj.balance;
   return _cardEffectiveRecurring(card, yr, mo).effectiveRecurring;
 }
 
 function _otherSubText(card, yr, mo) {
   const st = cardBalanceStatus(card, yr, mo);
-  return st === 'final' ? 'beyond recurring' : st === 'projected' ? 'projected, beyond recurring' : 'enter a balance to project';
+  return st === 'final' ? 'beyond recurring' : st === 'current' ? 'so far, beyond bills charged' : 'enter a current balance';
+}
+
+// Sub-line for a card's balance tile
+function _cardBalanceSub(card, yr, mo, stmt) {
+  if (cardBalanceStatus(card, yr, mo) === 'current') {
+    return '<span style="color:var(--muted)">so far, as of ' + fmtAsOf(card.currentBalanceAsOf) + '</span>';
+  }
+  const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
+  return _ccChangeHtml(stmt, cardStatementBalance(card, prevYr, prevMo), 'total statement balance');
 }
 
 // Text under the balance input: what the balance means for this statement
@@ -10971,14 +10980,14 @@ function cardProjectionHtml(card, yr, mo) {
   }
   const proj = cardProjection(card, yr, mo);
   if (proj) {
-    return 'Projected statement <span style="color:var(--text);font-weight:600">' + fmt(proj.projected) + '</span>' +
-      '<br>' + fmt(proj.balance) + ' now + ' + fmt(proj.upcoming) + ' bills to come + ' + fmt(proj.paceExtra) +
-      ' at your current pace (' + proj.remainingDays + ' day' + (proj.remainingDays === 1 ? '' : 's') + ' left)';
+    return 'Counting <span style="color:var(--text);font-weight:600">' + fmt(proj.balance) + '</span> so far this statement' +
+      (proj.upcoming > 0 ? '<br>' + fmt(proj.upcoming) + ' in recurring bills still to come' : '') +
+      ' &middot; ' + proj.remainingDays + ' day' + (proj.remainingDays === 1 ? '' : 's') + ' left';
   }
   if (card.currentBalance !== undefined && card.currentBalanceAsOf) {
     return 'Balance from ' + fmtAsOf(card.currentBalanceAsOf) + ' is outside this statement period';
   }
-  return 'Enter your balance mid-cycle to project this statement';
+  return 'Enter your balance any time to track this statement so far';
 }
 
 // ─── BUSINESS MODULE ─────────────────────────────────────────────────────
@@ -12036,7 +12045,7 @@ function renderCreditCardsPage() {
           <div class="rogers-meter">
             <div class="rm-label">Monthly balance${ccStatusTag(cardBalanceStatus(card, yr, mo))}</div>
             <div class="rm-value" style="color:var(--text)">${fmt(_stmtBalance)}</div>
-            <div class="rm-sub" style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">${_stmtChangeHtml}</div>
+            <div class="rm-sub" style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">${_cardBalanceSub(card, yr, mo, _stmtBalance)}</div>
           </div>
           <div class="rogers-meter">
             <div class="rm-label">Recurring</div>
@@ -12045,7 +12054,7 @@ function renderCreditCardsPage() {
           </div>
           <div class="rogers-meter">
             <div class="rm-label">Other spending</div>
-            <div class="rm-value">${fmt(Math.max(0, _stmtBalance - effectiveRecurring))}</div>
+            <div class="rm-value">${fmt(cardDiscretionarySpend(card, yr, mo))}</div>
             <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_otherSubText(card, yr, mo)}</div>
           </div>
         </div>
@@ -12407,10 +12416,10 @@ function updateCardMetrics(cardId) {
   const sub = i => tiles[i] && tiles[i].querySelector('.rm-sub');
   const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
   if (val(0)) val(0).textContent = fmt(m.stmtBalance);
-  if (sub(0)) sub(0).innerHTML = _ccChangeHtml(m.stmtBalance, cardStatementBalance(card, prevYr, prevMo), 'total statement balance');
+  if (sub(0)) sub(0).innerHTML = _cardBalanceSub(card, yr, mo, m.stmtBalance);
   if (val(1)) val(1).textContent = fmt(m.effectiveRecurring);
   if (sub(1)) sub(1).textContent = m.cashBack > 0 ? 'bills, after cash back' : 'bills on this card';
-  if (val(2)) val(2).textContent = fmt(Math.max(0, m.stmtBalance - m.effectiveRecurring));
+  if (val(2)) val(2).textContent = fmt(cardDiscretionarySpend(card, yr, mo));
   if (sub(2)) sub(2).textContent = _otherSubText(card, yr, mo);
   const lab0 = tiles[0] && tiles[0].querySelector('.rm-label');
   if (lab0) lab0.innerHTML = 'Monthly balance' + ccStatusTag(cardBalanceStatus(card, yr, mo));
