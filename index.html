@@ -11257,13 +11257,24 @@ function toggleBizSection(bodyId) {
 }
 
 // Toggle the bookings calendar grid and rotate its chevron
+var _bkCalOpen = false;   // stays open while flipping months
 function toggleBookingsCalendar() {
   const body = document.getElementById('bookings-cal-body');
   const chev = document.getElementById('bookings-cal-chevron');
   if (!body) return;
   const isOpen = body.classList.contains('is-open') || (body.style.maxHeight && body.style.maxHeight !== '0px');
   toggleSection('bookings-cal-body');
+  _bkCalOpen = !isOpen;
   if (chev) chev.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(-180deg)';
+}
+
+// Flip the bookings calendar to the previous/next month. Uses the app's month
+// navigation so the tiles and booking list above/below follow along.
+function flipBookingsMonth(dir, ev) {
+  if (ev) ev.stopPropagation();
+  _bkCalOpen = true;
+  const btn = document.getElementById(dir < 0 ? 'prev-month' : 'next-month');
+  if (btn) btn.click();
 }
 
 function buildBookingsCalendarHTML(yr, mo) {
@@ -11302,10 +11313,16 @@ function buildBookingsCalendarHTML(yr, mo) {
     addOcc(b.paidDay, { booking: b, kind: 'paid', crossMonth: true });
   });
 
+  const navBtn = (dir, label, glyph) => '<button class="icon-btn" onclick="flipBookingsMonth(' + dir + ', event)" aria-label="' + label + '" title="' + label + '" style="opacity:1;width:30px;height:30px;font-size:1.1em">' + glyph + '</button>';
   let out = '<div class="section" style="margin-bottom:16px"><div class="section-header" style="cursor:pointer" onclick="toggleBookingsCalendar()">' +
     '<div class="section-title"><div class="section-dot" style="background:var(--accent2)"></div>Bookings Calendar</div>' +
-    '<svg id="bookings-cal-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s"><polyline points="4 6 8 10 12 6"></polyline></svg>' +
-    '</div><div class="section-body" id="bookings-cal-body" style="max-height:0;overflow:hidden;padding:0 12px">';
+    '<div style="display:flex;align-items:center;gap:8px">' +
+      navBtn(-1, 'Previous month', '&lsaquo;') +
+      '<span style="font-family:var(--font-mono);font-size:0.8571em;min-width:4.5em;text-align:center">' + MONTHS[mo] + ' ' + yr + '</span>' +
+      navBtn(1, 'Next month', '&rsaquo;') +
+      '<svg id="bookings-cal-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform .2s;margin-left:4px' + (_bkCalOpen ? ';transform:rotate(-180deg)' : '') + '"><polyline points="4 6 8 10 12 6"></polyline></svg>' +
+    '</div>' +
+    '</div><div class="section-body' + (_bkCalOpen ? ' is-open' : '') + '" id="bookings-cal-body" style="' + (_bkCalOpen ? 'max-height:none;' : 'max-height:0;') + 'overflow:hidden;padding:0 12px">';
 
   out += '<div class="cal-grid">';
   DAY_NAMES.forEach(n => out += '<div class="cal-dow">' + n + '</div>');
