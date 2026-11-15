@@ -570,8 +570,24 @@
   .cc-ov-bar > div { height:100%; transition:width .3s; }
   .cc-ov-legend { display:flex; flex-wrap:wrap; gap:6px 16px; padding:10px 20px 18px; font-family:var(--font-mono); font-size:0.7857em; color:var(--muted); }
   .cc-ov-legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  .cc-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+  .cc-grid.has-open { grid-template-columns:1fr; }
+  .cc-card:not(.cc-open) .cc-stmt { display:none; }
+  .cc-card:not(.cc-open) .section-header { padding:14px 16px; border-bottom:none; height:100%; box-sizing:border-box; }
+  .cc-card:not(.cc-open) .section-title { flex-direction:column; gap:8px !important; min-width:0; }
+  .cc-card:not(.cc-open) .section-title > div { min-width:0; }
+  .cc-card .section-title > div > div:first-child { overflow-wrap:break-word; }
+  .cc-card:not(.cc-open) .section-title > div > div:first-child { font-size:0.95em; line-height:1.25; }
+  @media (max-width: 600px) {
+    .cc-grid { gap:10px; }
+    .cc-card:not(.cc-open) .section-header { padding:12px; }
+    .cc-card:not(.cc-open) .section-title > div > div:first-child { font-size:0.8em; }
+    .cc-card:not(.cc-open) .cc-sum-val { font-size:1.25em; }
+  }
+  .cc-sum-val { color:var(--text); font-family:var(--font-serif); font-size:1.5em; letter-spacing:-.02em; }
   .cc-sum { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; font-family:var(--font-mono); font-size:0.7857em; }
   .cc-sum .k { color:var(--muted); margin-right:5px; }
+  .cc-sum > span { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
   .cc-card .section-chevron { transition: transform .2s; }
   .cc-card.cc-open .section-chevron { transform: rotate(180deg); }
   .cc-card.cc-open .cc-sum { display:none; }
@@ -10774,7 +10790,6 @@ function cardsOverviewInnerHtml(yr, mo) {
     : '';
   const legend = '<div class="cc-ov-legend">' +
     o.per.map(x => '<span><i style="background:' + ccColor(x.i) + '"></i>' + escHtml(x.card.name) + ' <span style="color:var(--text)">' + fmt(x.stmt) + '</span>' + ccStatusTag(x.status) + '</span>').join('') +
-    (rem < 0 ? '<span style="color:var(--expense-red)">| budget limit ' + fmt(Math.max(0, o.budget)) + '</span>' : '') +
     '</div>';
   return tiles + bar + overMark + legend;
 }
@@ -10794,25 +10809,26 @@ var _ccOpen;
 function ccOpenSet() { return _ccOpen || (_ccOpen = new Set()); }
 
 function cardSummaryHtml(card, m) {
-  const other = Math.max(0, m.stmtBalance - m.effectiveRecurring);
-  return '<span><span class="k">Balance</span><span style="color:var(--text)">' + fmt(m.stmtBalance) + '</span>' +
-      ccStatusTag(cardBalanceStatus(card, calYear, calMonth)) + '</span>' +
-    '<span><span class="k">Recurring</span><span style="color:var(--text)">' + fmt(m.effectiveRecurring) + '</span></span>' +
-    '<span><span class="k">Other</span><span style="color:var(--text)">' + fmt(other) + '</span></span>';
+  return '<span><span class="cc-sum-val">' + fmt(m.stmtBalance) + '</span>' +
+    ccStatusTag(cardBalanceStatus(card, calYear, calMonth)) + '</span>';
 }
 
 function ccToggleCard(id) {
   const sec = document.getElementById('cc-section-' + id);
   const el = document.getElementById('cc-section-' + id + '-body');
   if (!sec || !el) return;
+  const grid = document.getElementById('cc-grid');
   if (ccOpenSet().has(id)) {
     ccOpenSet().delete(id);
+    // Back to two-per-row once the collapse animation finishes
+    setTimeout(() => { if (grid && !ccOpenSet().size) grid.classList.remove('has-open'); }, 300);
     sec.classList.remove('cc-open');
     el.style.overflow = 'hidden';
     el.style.maxHeight = el.scrollHeight + 'px';
     requestAnimationFrame(() => requestAnimationFrame(() => { el.style.maxHeight = '0px'; }));
   } else {
     ccOpenSet().add(id);
+    if (grid) grid.classList.add('has-open');
     sec.classList.add('cc-open');
     el.style.overflow = 'hidden';
     el.style.maxHeight = el.scrollHeight + 'px';
@@ -11826,6 +11842,7 @@ function renderCreditCardsPage() {
         (creditCards.length > 1 ? 'All cards' : 'Card budget') + '</div></div>' +
       '<div id="cc-overview-inner">' + cardsOverviewInnerHtml(calYear, calMonth) + '</div></div>';
   }
+  html += '<div class="cc-grid' + (ccOpenSet().size ? ' has-open' : '') + '" id="cc-grid">';
   creditCards.forEach((card, idx) => {
     const cardId = 'cc-section-' + card.id;
   
@@ -11958,19 +11975,18 @@ function renderCreditCardsPage() {
       '</div>';
 
     html += `
-    <div class="section cc-card${ccOpenSet().has(card.id) ? ' cc-open' : ''}" style="margin-bottom:20px" id="${cardId}">
+    <div class="section cc-card${ccOpenSet().has(card.id) ? ' cc-open' : ''}" style="margin-bottom:0" id="${cardId}">
       <div class="section-header" onclick="ccToggleCard('${card.id}')" style="cursor:pointer;align-items:flex-start">
         <div class="section-title" style="gap:12px;align-items:flex-start">
           ${logoHtml}
           <div>
             <div style="font-weight:600;font-size:1em">${escHtml(card.name)}</div>
-            <div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:2px">Statement: ${periodLabel}</div>
+            <div class="cc-stmt" style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:2px">Statement: ${periodLabel}</div>
             <div class="cc-sum" id="cc-sum-${card.id}">${cardSummaryHtml(card, _m)}</div>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <button class="icon-btn" onclick="event.stopPropagation();openEditCardModal('${card.id}')" title="Edit card"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg></button>
-          ${true ? `<button class="icon-btn delete" onclick="event.stopPropagation();removeCard(${idx})" title="Remove card"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"/></svg></button>` : ''}
           <svg class="section-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 4 6 8 10 4"/></svg>
         </div>
       </div>
@@ -12035,6 +12051,7 @@ function renderCreditCardsPage() {
     </div>`;
   });
 
+  html += '</div>';
   container.innerHTML = html;
 }
 
