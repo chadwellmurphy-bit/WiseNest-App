@@ -566,10 +566,10 @@
     overflow: hidden;
     transition: max-height 0.3s ease;
   }
-  .cc-ov-bar { display:flex; height:10px; border-radius:5px; overflow:hidden; background:var(--surface2); margin:4px 20px 0; }
-  .cc-ov-bar > div { height:100%; transition:width .3s; }
-  .cc-ov-legend { display:flex; flex-wrap:wrap; gap:6px 16px; padding:10px 20px 18px; font-family:var(--font-mono); font-size:0.7857em; color:var(--muted); }
-  .cc-ov-legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  .rogers-meters.cc-ov-tiles { grid-template-columns:repeat(3, 1fr); }
+  .rogers-meters.cc-ov-tiles.four { grid-template-columns:repeat(4, 1fr); }
+  @media (max-width: 900px) { .rogers-meters.cc-ov-tiles.four { grid-template-columns:1fr 1fr; } }
+  @media (max-width: 600px) { .rogers-meters.cc-ov-tiles { grid-template-columns:1fr 1fr; } }
   .cc-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
   .cc-grid.has-open { grid-template-columns:1fr; }
   .cc-card:not(.cc-open) .cc-stmt { display:none; }
@@ -2009,7 +2009,7 @@
     .rogers-meters { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 600px) {
-    #cc-overview .rogers-meter:last-child, .cc-card .rogers-meter:last-child { grid-column: span 2; }
+    #cc-overview .cc-ov-tiles:not(.four) .rogers-meter:last-child, .cc-card .rogers-meter:last-child { grid-column: span 2; }
   }
   .rogers-meter {
     background: var(--surface2);
@@ -10767,8 +10767,16 @@ function cardsOverviewInnerHtml(yr, mo) {
   const nFinal = o.per.filter(x => x.status === 'final').length;
   const allFinal = nFinal === o.per.length;
   const balLabel = allFinal ? 'Final balance' : nProj ? 'Projected balance' : 'Total balance';
+  // Rewards earned so far this year across every card with rewards
+  const rwCards = creditCards.filter(c => cardHasRewards(c));
+  const rwYTD = rwCards.reduce((t, c) => t + cardRewardsYTD(c, yr, mo), 0);
+  const rewardsTile = rwCards.length
+    ? '<div class="rogers-meter"><div class="rm-label">Rewards ' + yr + '</div>' +
+        '<div class="rm-value" style="color:var(--accent)">' + fmt(rwYTD) + '</div>' +
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">earned Jan\u2013' + MONTHS[mo] + '</div></div>'
+    : '';
   const tiles =
-    '<div class="rogers-meters" style="padding:16px 20px 10px;grid-template-columns:repeat(3, 1fr);margin-bottom:0">' +
+    '<div class="rogers-meters cc-ov-tiles' + (rewardsTile ? ' four' : '') + '" style="padding:16px 20px 18px;margin-bottom:0">' +
       '<div class="rogers-meter"><div class="rm-label">Card budget</div>' +
         '<div class="rm-value">' + fmt(Math.max(0, o.budget)) + '</div>' +
         '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (o.free < 0 ? '-' : '') + fmt(Math.abs(o.free)) + ' free + ' + fmt(o.totalRecurring) + ' card bills</div></div>' +
@@ -10778,20 +10786,9 @@ function cardsOverviewInnerHtml(yr, mo) {
       '<div class="rogers-meter"><div class="rm-label">Budget balance</div>' +
         '<div class="rm-value" style="color:' + (rem >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' + (rem >= 0 ? '+' : '-') + fmt(Math.abs(rem)) + '</div>' +
         '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (rem >= 0 ? 'left to spend' : 'over budget') + (allFinal ? '' : nProj ? ' (projected)' : ' (estimated)') + '</div></div>' +
+      rewardsTile +
     '</div>';
-  // Bar: each card's balance as a share of the budget (or of total spend when over)
-  const scale = Math.max(o.budget, o.totalBalance) || 1;
-  let bar = '<div class="cc-ov-bar">';
-  o.per.forEach(x => { if (x.stmt > 0) bar += '<div title="' + escHtml(x.card.name) + ': ' + fmt(x.stmt) + '" style="width:' + (x.stmt / scale * 100) + '%;background:' + ccColor(x.i) + '"></div>'; });
-  if (rem < 0) bar += '<div title="Over budget" style="width:0"></div>';
-  bar += '</div>';
-  const overMark = rem < 0 && o.budget > 0
-    ? '<div style="position:relative;margin:0 20px;height:0"><div style="position:absolute;left:' + (o.budget / scale * 100) + '%;top:-12px;width:2px;height:14px;background:var(--expense-red)" title="Budget limit"></div></div>'
-    : '';
-  const legend = '<div class="cc-ov-legend">' +
-    o.per.map(x => '<span><i style="background:' + ccColor(x.i) + '"></i>' + escHtml(x.card.name) + ' <span style="color:var(--text)">' + fmt(x.stmt) + '</span>' + ccStatusTag(x.status) + '</span>').join('') +
-    '</div>';
-  return tiles + bar + overMark + legend;
+  return tiles;
 }
 
 function updateCardsOverview() {
