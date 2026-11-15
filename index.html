@@ -10696,7 +10696,9 @@ function computeCardMetrics(card, yr, mo) {
     .filter(c => c.id !== card.id)
     .reduce((s, c) => s + cardDiscretionarySpend(c, yr, mo), 0);
   const sharedLeftover = leftover - otherCardsSpend;
-  const cardBudget = sharedLeftover + r.effectiveRecurring;
+  // Add back the card's bills at their FULL amount: leftover subtracted them in full,
+  // and the statement total is already net of any cash back credit.
+  const cardBudget = sharedLeftover + r.recurringTotal;
   const stmtBalance = cardStatementBalance(card, yr, mo);
   return {
     leftover, sharedLeftover, otherCardsSpend,
@@ -10721,14 +10723,17 @@ function computeCardsOverview(yr, mo) {
   const per = creditCards.map((c, i) => {
     const r = _cardEffectiveRecurring(c, yr, mo);
     const stmt = cardStatementBalance(c, yr, mo);
-    return { card: c, i, stmt, status: cardBalanceStatus(c, yr, mo), recurring: r.effectiveRecurring, other: Math.max(0, stmt - r.effectiveRecurring) };
+    return { card: c, i, stmt, status: cardBalanceStatus(c, yr, mo), recurring: r.effectiveRecurring, grossRecurring: r.recurringTotal, other: Math.max(0, stmt - r.effectiveRecurring) };
   });
   const totalRecurring = per.reduce((s, x) => s + x.recurring, 0);
   const totalBalance = per.reduce((s, x) => s + x.stmt, 0);
-  const budget = base.leftover + totalRecurring;
+  const grossRecurring = per.reduce((s, x) => s + x.grossRecurring, 0);
+  const budget = base.leftover + grossRecurring;
+  // "Free" money: what's left after every bill, with cash back credits counted
+  const free = budget - totalRecurring;
   const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
   const prevBalance = creditCards.reduce((s, c) => s + cardStatementBalance(c, prevYr, prevMo), 0);
-  return { leftover: base.leftover, totalRecurring, totalBalance, prevBalance, budget, remaining: budget - totalBalance, per };
+  return { leftover: base.leftover, free, totalRecurring, totalBalance, prevBalance, budget, remaining: budget - totalBalance, per };
 }
 
 function _ccChangeHtml(cur, prev, emptyText) {
@@ -10750,7 +10755,7 @@ function cardsOverviewInnerHtml(yr, mo) {
     '<div class="rogers-meters" style="padding:16px 20px 10px;grid-template-columns:repeat(3, 1fr);margin-bottom:0">' +
       '<div class="rogers-meter"><div class="rm-label">Card budget</div>' +
         '<div class="rm-value">' + fmt(Math.max(0, o.budget)) + '</div>' +
-        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">leftover + recurring</div></div>' +
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (o.free < 0 ? '-' : '') + fmt(Math.abs(o.free)) + ' free + ' + fmt(o.totalRecurring) + ' card bills</div></div>' +
       '<div class="rogers-meter"><div class="rm-label">' + balLabel + '</div>' +
         '<div class="rm-value">' + fmt(o.totalBalance) + '</div>' +
         '<div style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">' + _ccChangeHtml(o.totalBalance, o.prevBalance, 'all cards this month') + '</div></div>' +
