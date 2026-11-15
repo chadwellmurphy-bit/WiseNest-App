@@ -3134,6 +3134,25 @@
 </div><!-- /shell -->
 
 <div class="notif" id="notif">Saved ✓</div>
+<button id="reenter-pill" onclick="openReenter()" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom));z-index:900;align-items:center;gap:8px;background:var(--surface2);color:var(--text);border:1px solid var(--accent);border-radius:999px;padding:9px 16px;font-family:var(--font-sans);font-size:0.875em;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.35)">
+  <span style="background:var(--accent);color:#0b1a2b;border-radius:999px;min-width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8em;padding:0 6px" id="reenter-count">0</span>
+  Changes to re-enter
+</button>
+<div class="modal-overlay" id="reenter-modal" onclick="if(event.target===this)closeReenter()" style="z-index:1150">
+  <div class="modal" style="max-width:470px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <h2 style="font-family:var(--font-serif);font-size:1.3em;letter-spacing:-.02em;margin:0">Changes to re-enter</h2>
+      <button onclick="closeReenter()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.4em;line-height:1;padding:0">&times;</button>
+    </div>
+    <div id="reenter-sub" style="font-size:0.8em;color:var(--muted);margin-bottom:14px;line-height:1.5"></div>
+    <div id="reenter-body" style="max-height:50vh;overflow:auto"></div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:18px">
+      <button class="btn-secondary" style="width:100%" onclick="copyReenter(this)">Copy this list</button>
+      <button class="btn-secondary" style="width:100%" onclick="closeReenter()">Keep for later</button>
+      <button class="reset-btn" onclick="clearReenter()">Done — clear the list</button>
+    </div>
+  </div>
+</div>
 
 <!-- INCOME MODAL -->
 <div class="modal-overlay" id="income-modal" onclick="closeIncomeModal(event)">
@@ -3635,7 +3654,10 @@ function importDataFile(input) {
       DATA_KEYS.forEach(k => {
         try { localStorage.setItem(k, JSON.stringify(data)); } catch (e) {}
       });
-      alert('Backup imported. The app will now reload.\n\nPress Save afterward to sync it.');
+      // Flag it as unsaved so the startup sync does NOT pull the cloud copy over
+      // the backup. The user then chooses to push it (or discard it).
+      try { localStorage.setItem(UNSAVED_KEY, '1'); } catch (e) {}
+      alert('Backup imported. The app will now reload.\n\nThen tap Save (or "Push this device\'s data") to make the backup the synced copy on all devices.');
       location.reload();
     } catch (e) {
       alert('Import failed: ' + e.message);
@@ -3923,9 +3945,15 @@ function shrinkStoredLogos() {
       if (out && out.length < before.length) { job.setter(out); shrank++; }
       if (--pending === 0 && shrank) {
         console.info('Compressed ' + shrank + ' oversized logo(s)');
-        markDirty();
+        // Housekeeping, not an edit: save it on this device but do NOT flag
+        // unsaved changes. A device that was only opened must never end up
+        // "ahead" of the cloud (that is what blocks the startup sync and invites
+        // an overwrite). The smaller logos go up with the next real save.
+        saveState();
+        if (!dataDirty && cleanState) {
+          try { cleanState = captureState(); localStorage.setItem(CLEAN_KEY, cleanState); } catch (e) {}
+        }
         refreshPayloadSize();
-        setSyncStatus('idle');
       }
     });
   });
@@ -3960,6 +3988,7 @@ function payloadToCaptureShape(pl) {
     monthlyInvests:          pl.monthlyInvests || {},
     rogersPoints:            pl.cardRewards || {},
     ccActualSpend:           pl.ccActualSpend || {},
+    creditCards:             pl.creditCards || [],
     bankAccounts:            pl.bankAccountsData || [],
     monthlyBankAccounts:     pl.monthlyBankAccounts || {},
     mortgageData:            pl.mortgageData || {},
@@ -3976,6 +4005,7 @@ const UC_SECTIONS = [
   { key: 'debts',                   label: 'Debt',                  type: 'list' },
   { key: 'investments',             label: 'Investments',           type: 'list' },
   { key: 'bankAccounts',            label: 'Bank Accounts',         type: 'list' },
+  { key: 'creditCards',             label: 'Credit cards',          type: 'list' },
   { key: 'businessBookings',        label: 'Business bookings',     type: 'list' },
   { key: 'businessExpenses',        label: 'Business expenses',     type: 'list' },
   { key: 'incomeAmounts',           label: 'Income amounts',        type: 'map' },
@@ -4040,6 +4070,7 @@ function diffStates(a, b) {
   if (!a || !b) return [];
   const out = [];
   UC_SECTIONS.forEach(sec => {
+    if (a[sec.key] === undefined || b[sec.key] === undefined) return;
     let notes;
     if (sec.type === 'list')      notes = _ucDiffList(a[sec.key], b[sec.key]);
     else if (sec.type === 'map')  notes = _ucDiffMap(a[sec.key], b[sec.key]);
@@ -4047,6 +4078,228 @@ function diffStates(a, b) {
     if (notes.length) out.push({ label: sec.label, notes: notes });
   });
   return out;
+}
+
+// ── Detailed change list: what exactly changed, worded so it can be re-entered ──
+function _ucMoney(n) {
+  if (typeof n !== 'number' || isNaN(n)) return String(n);
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
+}
+function _ucVal(k, v) {
+  if (v === undefined || v === null || v === '') return '(blank)';
+  if (typeof v === 'number' && /amount|balance|value|payment|price|cost|limit|total|mileage/i.test(k)) return _ucMoney(v);
+  if (typeof v === 'object') return '(details)';
+  return String(v);
+}
+function _ucMon(yr, mo) { return MONTHS[+mo] + ' ' + yr; }
+const _UC_SKIP_FIELDS = { id: 1, logo: 1, startYr: 1, startMo: 1, ccOtherCharges: 1, ccOtherChargesCard: 1, ccCashBack: 1, ccCashBackCard: 1 };
+function _ucItemName(x, fb) {
+  return (x && (x.name || x.client || x.label || x.description || x.vendor)) ? String(x.name || x.client || x.label || x.description || x.vendor) : fb;
+}
+const _UC_FIELD_LABELS = { currentBalance: 'current balance', currentBalanceAsOf: 'balance date', due: 'due day',
+  source: 'paid from', category: 'category', amount: 'amount', name: 'name', freq: 'frequency', rate: 'rate',
+  balance: 'balance', value: 'value', payment: 'payment', status: 'status', client: 'client', day: 'day',
+  rewardsEnabled: 'rewards', rewardsMode: 'rewards payout', rewardsAppliesTo: 'cash back applied to',
+  otherChargesAutoAdd: 'auto-add other charges', statementDayStart: 'statement start day', statementDayEnd: 'statement end day' };
+function _ucFieldChanges(a, b) {
+  const keys = Object.keys(a || {}).concat(Object.keys(b || {})).filter((k, i, arr) => arr.indexOf(k) === i && !_UC_SKIP_FIELDS[k]);
+  return keys.filter(k => JSON.stringify((a || {})[k]) !== JSON.stringify((b || {})[k]))
+    .map(k => (_UC_FIELD_LABELS[k] || k) + ' ' + _ucVal(k, (a || {})[k]) + ' → ' + _ucVal(k, (b || {})[k]));
+}
+function _ucBrief(x) {
+  const bits = [];
+  ['amount', 'balance', 'value', 'currentBalance'].forEach(k => { if (typeof x[k] === 'number') bits.push(_ucMoney(x[k])); });
+  if (x.due) bits.push('due ' + x.due);
+  if (x.day && x.mo !== undefined && x.yr) bits.push(_ucMon(x.yr, x.mo) + ' ' + x.day);
+  return bits.length ? ' (' + bits.join(', ') + ')' : '';
+}
+// Split "cardId-yr-mo" from the end (ids may contain dashes)
+function _ucSplitTail(k, n) {
+  const p = k.split('-');
+  return { head: p.slice(0, p.length - n).join('-'), tail: p.slice(p.length - n) };
+}
+
+function describeChanges(a, b) {
+  if (!a || !b) return [];
+  const names = {};
+  [a, b].forEach(st => ['budgetIncome', 'budgetExpenses', 'creditCards', 'debts', 'investments', 'bankAccounts']
+    .forEach(key => (st[key] || []).forEach(x => { if (x && x.id != null && x.name) names[x.id] = x.name; })));
+  const nm = id => names[id] || id;
+  const synthetic = id => {
+    const x = (b.budgetExpenses || []).concat(a.budgetExpenses || []).find(e => e && e.id === id);
+    return !!(x && (x.ccOtherCharges || x.ccCashBack));
+  };
+  const out = [];
+  const push = (label, lines) => { if (lines.length) out.push({ label, lines }); };
+  const mapKeys = (A, B) => Object.keys(A || {}).concat(Object.keys(B || {})).filter((k, i, arr) => arr.indexOf(k) === i);
+
+  // Lists of named things
+  [['budgetIncome', 'Money In'], ['budgetExpenses', 'Money Out'], ['debts', 'Debt'], ['investments', 'Investments'],
+   ['bankAccounts', 'Bank accounts'], ['creditCards', 'Credit cards'], ['businessBookings', 'Business bookings'],
+   ['businessExpenses', 'Business expenses']].forEach(([key, label]) => {
+    if (a[key] === undefined || b[key] === undefined) return;
+    const A = {}, B = {}, lines = [];
+    (a[key] || []).forEach((x, i) => { A[(x && x.id != null) ? x.id : 'i' + i] = x; });
+    (b[key] || []).forEach((x, i) => { B[(x && x.id != null) ? x.id : 'i' + i] = x; });
+    Object.keys(B).forEach(k => {
+      if (B[k] && (B[k].ccOtherCharges || B[k].ccCashBack)) return;   // rebuilt automatically
+      if (!(k in A)) lines.push('Added "' + _ucItemName(B[k], k) + '"' + _ucBrief(B[k] || {}));
+      else if (JSON.stringify(A[k]) !== JSON.stringify(B[k])) {
+        const f = _ucFieldChanges(A[k], B[k]);
+        if (f.length) lines.push('"' + _ucItemName(B[k], k) + '": ' + f.join('; '));
+      }
+    });
+    Object.keys(A).forEach(k => {
+      if (A[k] && (A[k].ccOtherCharges || A[k].ccCashBack)) return;
+      if (!(k in B)) lines.push('Removed "' + _ucItemName(A[k], k) + '"');
+    });
+    push(label, lines);
+  });
+
+  // Base amounts keyed by item id
+  [['incomeAmounts', 'Money In amounts'], ['expenseAmounts', 'Money Out amounts']].forEach(([key, label]) => {
+    const A = a[key] || {}, B = b[key] || {};
+    const listKey = key === 'incomeAmounts' ? 'budgetIncome' : 'budgetExpenses';
+    const existed = id => (a[listKey] || []).some(x => x && x.id === id);
+    push(label, mapKeys(A, B).filter(k => !synthetic(k) && existed(k) && JSON.stringify(A[k]) !== JSON.stringify(B[k]))
+      .map(k => nm(k) + ': ' + _ucVal('amount', A[k]) + ' → ' + _ucVal('amount', B[k])));
+  });
+
+  // Month-by-month changes on expenses / income schedules
+  const histLines = (A, B, label, listKey) => {
+    const lines = [];
+    const baseOf = id => {
+      const it = (a[listKey] || []).concat(b[listKey] || []).find(x => x && x.id === id) || {};
+      return { amount: it.amount, due: it.due, source: it.source, category: it.category };
+    };
+    mapKeys(A, B).forEach(id => {
+      if (synthetic(id)) return;
+      const ea = {}, eb = {};
+      (A[id] || []).forEach(e => { ea[e.yr + '-' + e.mo] = e; });
+      (B[id] || []).forEach(e => { eb[e.yr + '-' + e.mo] = e; });
+      mapKeys(ea, eb).forEach(ym => {
+        if (JSON.stringify(ea[ym]) === JSON.stringify(eb[ym])) return;
+        const [yr, mo] = ym.split('-');
+        if (!eb[ym]) { lines.push(nm(id) + ', ' + _ucMon(yr, mo) + ': change removed'); return; }
+        const before = ea[ym] || (() => {
+          // No entry for that month before: compare with what applied just before it
+          const prev = (A[id] || []).filter(e => e.yr < +yr || (e.yr === +yr && e.mo < +mo)).pop();
+          return prev || baseOf(id);
+        })();
+        const f = _ucFieldChanges(Object.assign({}, before, { yr: 0, mo: 0 }), Object.assign({}, eb[ym], { yr: 0, mo: 0 }))
+          .filter(t => !/^(yr|mo|manual) /.test(t));
+        lines.push(nm(id) + ', from ' + _ucMon(yr, mo) + ': ' + (f.length ? f.join('; ') : 'updated'));
+      });
+    });
+    push(label, lines);
+  };
+  histLines(a.expenseHistory, b.expenseHistory, 'Money Out, month by month', 'budgetExpenses');
+  histLines(a.incomeAmountSchedule, b.incomeAmountSchedule, 'Money In, month by month', 'budgetIncome');
+
+  // Actual pay entries: "yr-mo-incomeId-payIdx"
+  (() => {
+    const A = a.incomeActuals || {}, B = b.incomeActuals || {}, lines = [];
+    mapKeys(A, B).forEach(k => {
+      if (JSON.stringify(A[k]) === JSON.stringify(B[k])) return;
+      const p = k.split('-'), yr = p[0], mo = p[1], idx = +p[p.length - 1], id = p.slice(2, p.length - 1).join('-');
+      lines.push(nm(id) + ', ' + _ucMon(yr, mo) + ' pay ' + (idx + 1) + ': actual ' + _ucVal('amount', A[k]) + ' → ' + _ucVal('amount', B[k]));
+    });
+    push('Actual pay', lines);
+  })();
+
+  // Card statements and rewards: "cardId-yr-mo"
+  [['ccActualSpend', 'Card statements', 'statement total'], ['rogersPoints', 'Cash back / points', 'rewards']].forEach(([key, label, what]) => {
+    const A = a[key] || {}, B = b[key] || {}, lines = [];
+    mapKeys(A, B).forEach(k => {
+      if (JSON.stringify(A[k]) === JSON.stringify(B[k])) return;
+      const t = _ucSplitTail(k, 2);
+      lines.push((t.head ? nm(t.head) : 'Rogers') + ', ' + _ucMon(t.tail[0], t.tail[1]) + ' ' + what + ': ' +
+        _ucVal('amount', A[k]) + ' → ' + _ucVal('amount', B[k]));
+    });
+    push(label, lines);
+  });
+
+  // Monthly balance snapshots: "yr-mo" -> [entries]
+  [['monthlyDebts', 'Debt balances', 'debts'], ['monthlyInvests', 'Investment values', 'investments'],
+   ['monthlyBankAccounts', 'Bank balances', 'bankAccounts']].forEach(([key, label, parent]) => {
+    const A = a[key] || {}, B = b[key] || {}, lines = [];
+    mapKeys(A, B).forEach(ym => {
+      if (JSON.stringify(A[ym]) === JSON.stringify(B[ym])) return;
+      const [yr, mo] = ym.split('-');
+      const la = Array.isArray(A[ym]) ? A[ym] : [], lb = Array.isArray(B[ym]) ? B[ym] : [];
+      const n = Math.max(la.length, lb.length);
+      for (let i = 0; i < n; i++) {
+        if (JSON.stringify(la[i]) === JSON.stringify(lb[i])) continue;
+        const ref = (b[parent] || [])[i] || (a[parent] || [])[i] || {};
+        const who = _ucItemName(lb[i] || la[i] || {}, _ucItemName(ref, 'Item ' + (i + 1)));
+        const f = _ucFieldChanges(la[i] || {}, lb[i] || {}).filter(t => !/^name /.test(t));
+        lines.push(_ucMon(yr, mo) + ', ' + who + ': ' + (f.length ? f.join('; ') : 'updated'));
+      }
+      if (!n && !Array.isArray(B[ym])) lines.push(_ucMon(yr, mo) + ': updated');
+    });
+    push(label, lines);
+  });
+
+  // Plain objects
+  [['mortgageData', 'Mortgage'], ['businessMeta', 'Business settings']].forEach(([key, label]) => {
+    if (a[key] === undefined || b[key] === undefined) return;
+    push(label, _ucFieldChanges(a[key], b[key]));
+  });
+  // Anything else: fall back to counts
+  ['monthOverrides', 'businessExpenseSchedule'].forEach(key => {
+    const sec = UC_SECTIONS.find(x => x.key === key);
+    const notes = _ucDiffMap(a[key], b[key]);
+    if (notes.length) push(sec ? sec.label : key, notes);
+  });
+  return out;
+}
+
+function _ucRenderDetailed(list) {
+  return '<ul class="uc-list">' + list.map(s =>
+    '<li><span class="uc-sec">' + escapeHtml(s.label) + '</span>' +
+    s.lines.map(l => '<span class="uc-det">• ' + escapeHtml(l) + '</span>').join('') + '</li>').join('') + '</ul>';
+}
+function _ucAsText(list, heading) {
+  return (heading ? heading + '\n\n' : '') + list.map(s => s.label + '\n' + s.lines.map(l => '  - ' + l).join('\n')).join('\n\n');
+}
+function _ucCopy(text, btn) {
+  const done = () => { if (btn) { const t = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = t; }, 1800); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => { prompt('Copy this list:', text); });
+  else prompt('Copy this list:', text);
+}
+
+// ── "Changes to re-enter": kept after taking the cloud copy ──
+const REENTER_KEY = APP_NS + ':reenter';
+function getReenterList() {
+  try { return JSON.parse(localStorage.getItem(REENTER_KEY) || 'null'); } catch (e) { return null; }
+}
+function updateReenterPill() {
+  const pill = document.getElementById('reenter-pill');
+  if (!pill) return;
+  const r = getReenterList();
+  const n = r ? r.sections.reduce((t, s) => t + s.lines.length, 0) : 0;
+  pill.style.display = n ? 'flex' : 'none';
+  const c = document.getElementById('reenter-count');
+  if (c) c.textContent = n;
+}
+function openReenter() {
+  const r = getReenterList();
+  if (!r) return;
+  document.getElementById('reenter-sub').textContent =
+    'These were on this device but not saved' + (r.since ? ' (since ' + _ucFmtTime(r.since) + ')' : '') +
+    '. The newer cloud copy is loaded now — add back anything you still want, then press Save.';
+  document.getElementById('reenter-body').innerHTML = _ucRenderDetailed(r.sections);
+  document.getElementById('reenter-modal').classList.add('open');
+}
+function closeReenter() { document.getElementById('reenter-modal').classList.remove('open'); }
+function copyReenter(btn) {
+  const r = getReenterList();
+  if (r) _ucCopy(_ucAsText(r.sections, 'WiseNest changes to re-enter' + (r.since ? ' (since ' + _ucFmtTime(r.since) + ')' : '')), btn);
+}
+function clearReenter() {
+  if (!confirm('Clear this list? Do this once you have re-entered what you need.')) return;
+  try { localStorage.removeItem(REENTER_KEY); } catch (e) {}
+  closeReenter(); updateReenterPill();
 }
 
 function _ucRenderList(list) {
@@ -4067,12 +4320,17 @@ function renderUnsavedReview(pending) {
   const localObj = _ucParse(captureState());
   let html = '';
 
-  html += '<div class="uc-head">On this device, not yet pushed</div>';
+  let since = '';
+  try { since = _ucFmtTime(localStorage.getItem(UNSAVED_KEY + 'Since')); } catch (e) {}
+  html += '<div class="uc-head">On this device, not yet pushed' + (since ? ' (since ' + since + ')' : '') + '</div>';
   if (!cleanObj) {
     html += '<div class="uc-note">This device has no record of its last sync, so the individual changes cannot be listed. Pushing will replace the cloud copy with whatever is on this device.</div>';
   } else {
-    const mine = diffStates(cleanObj, localObj);
-    html += mine.length ? _ucRenderList(mine)
+    const mine = describeChanges(cleanObj, localObj);
+    html += mine.length
+      ? _ucRenderDetailed(mine) +
+        '<button class="btn-secondary" style="width:100%;margin-top:8px" onclick="_ucCopy(_ucAsText(describeChanges(_ucParse(cleanState), _ucParse(captureState())), \'WiseNest unsaved changes\'), this)">Copy this list</button>' +
+        (_ucRemoteState === 'ahead' && !pending ? '<div class="uc-note" style="margin-top:6px">If you use the cloud copy, this list is kept so you can re-enter these changes.</div>' : '')
       : '<div class="uc-note">Nothing actually differs from the last sync \u2014 the flag is stale. Either button below will clear it.</div>';
   }
 
@@ -4088,7 +4346,8 @@ function renderUnsavedReview(pending) {
   } else {
     const theirs = diffStates(cleanObj, _ucRemote);
     if (theirs.length) {
-      html += '<div class="uc-warn">The cloud copy has changed since this device last synced \u2014 most likely edits made on another device. Pushing from here would overwrite them.</div>';
+      html += '<div class="uc-warn">The cloud copy has changed since this device last synced \u2014 most likely edits made on another device. Pushing from here would overwrite them.' +
+        _ucTimesHtml() + '</div>';
       html += _ucRenderList(theirs);
     } else {
       html += '<div class="uc-note">Unchanged since this device last synced. Safe to push.</div>';
@@ -4096,6 +4355,22 @@ function renderUnsavedReview(pending) {
   }
 
   body.innerHTML = html;
+  // When the cloud is newer, the safe choice is to take it: make that the
+  // primary button and label the push for what it does.
+  const ahead = _ucRemoteState === 'ahead' && !pending;
+  const pushBtn = document.getElementById('uc-push-btn');
+  const cloudBtn = document.getElementById('uc-cloud-btn');
+  const btnWrap = document.getElementById('uc-btns');
+  if (pushBtn && cloudBtn && btnWrap) {
+    pushBtn.querySelector('.uc-push-label').textContent = ahead ? 'Overwrite the cloud with this device' : 'Push this device\u2019s data';
+    pushBtn.style.background = ahead ? 'transparent' : '';
+    pushBtn.style.color = ahead ? 'var(--expense-red)' : '';
+    pushBtn.style.border = ahead ? '1px solid var(--expense-red)' : '';
+    cloudBtn.textContent = ahead ? 'Use the newer cloud copy (recommended)' : 'Discard mine, use the cloud copy';
+    cloudBtn.className = ahead ? 'save-btn' : 'reset-btn';
+    if (ahead) { cloudBtn.style.width = '100%'; cloudBtn.style.justifyContent = 'center'; }
+    btnWrap.insertBefore(ahead ? cloudBtn : pushBtn, btnWrap.firstChild);
+  }
   if (sub) {
     sub.textContent = (_ucRemoteState === 'ahead' && !pending)
       ? 'Both copies have changed \u2014 choose which one wins'
@@ -4113,7 +4388,7 @@ async function openUnsavedReview(remoteAlreadyKnown) {
 
   if (!syncConfigured()) { _ucRemoteState = 'none'; renderUnsavedReview(false); return; }
   try {
-    _ucRemote = payloadToCaptureShape(await pullFromCloud());
+    _ucRemote = payloadToCaptureShape(await pullFromCloud(true));
     const cleanObj = cleanState ? _ucParse(cleanState) : null;
     _ucRemoteState = (cleanObj && diffStates(cleanObj, _ucRemote).length) ? 'ahead' : 'match';
   } catch (e) {
@@ -4127,14 +4402,51 @@ function closeUnsavedReview() {
   if (m) m.classList.remove('open');
 }
 
-function unsavedPushMine() { closeUnsavedReview(); handleSave(); }
+function _ucFmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('en-CA', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+function _ucTimesHtml() {
+  let lastSync = '';
+  try { lastSync = localStorage.getItem(CLEAN_KEY + 'At') || ''; } catch (e) {}
+  const cloud = _ucFmtTime(lastRemoteModified), mine = _ucFmtTime(lastSync);
+  if (!cloud && !mine) return '';
+  return '<div style="margin-top:6px">' + (cloud ? 'Cloud copy saved: <b>' + cloud + '</b><br>' : '') +
+    (mine ? 'This device last synced: <b>' + mine + '</b>' : '') + '</div>';
+}
+
+function unsavedPushMine() {
+  if (_ucRemoteState === 'ahead') {
+    const cloud = _ucFmtTime(lastRemoteModified);
+    if (!confirm('The cloud copy is newer' + (cloud ? ' (saved ' + cloud + ')' : '') + '.\n\n' +
+      'Overwriting it replaces everything on every device with the data on this device. ' +
+      'Changes made on other devices since this one last synced will be lost.\n\nOverwrite the cloud copy?')) return;
+  }
+  // The user has seen both copies and chosen this one: push over whatever is there now.
+  if (_peekRev && syncProvider() !== 'onedrive') setDbxRev(_peekRev);
+  closeUnsavedReview(); handleSave();
+}
 
 async function unsavedUseCloud() {
   if (!syncConfigured()) { closeUnsavedReview(); showSyncSetup(); return; }
-  if (!confirm('Discard the unsaved changes on this device and replace them with the cloud copy?\n\nThis cannot be undone.')) return;
+  if (!confirm('Replace the unsaved changes on this device with the cloud copy?\n\nA list of your unsaved changes will be kept so you can re-enter them.')) return;
+  // Keep a readable list of what is about to be discarded
+  let keep = null;
+  try {
+    const cleanObj = cleanState ? _ucParse(cleanState) : null;
+    const sections = cleanObj ? describeChanges(cleanObj, _ucParse(captureState())) : [];
+    if (sections.length) keep = { at: new Date().toISOString(), since: localStorage.getItem(UNSAVED_KEY + 'Since') || '', sections };
+  } catch (e) {}
   closeUnsavedReview();
   setSyncStatus('syncing');
   const ok = await loadFromCloud();
+  if (ok && keep) {
+    try { localStorage.setItem(REENTER_KEY, JSON.stringify(keep)); } catch (e) {}
+    updateReenterPill();
+    setTimeout(openReenter, 400);
+  }
   if (ok) {
     renderIncome(); renderExpenses(); renderDebts(); renderInvestments();
     renderCreditCardsPage(); renderBankAccounts(); renderMortgagePage();
@@ -4155,7 +4467,7 @@ async function unsavedUseCloud() {
 async function checkStartupConflict() {
   if (!syncConfigured() || !dataDirty || !cleanState) return;
   try {
-    _ucRemote = payloadToCaptureShape(await pullFromCloud());
+    _ucRemote = payloadToCaptureShape(await pullFromCloud(true));
     const cleanObj = _ucParse(cleanState);
     if (cleanObj && diffStates(cleanObj, _ucRemote).length) {
       _ucRemoteState = 'ahead';
@@ -4288,7 +4600,9 @@ async function dbxAccessToken() {
   return _dbxAccess;
 }
 
-async function dbxPull() {
+let lastRemoteModified = '';   // when the cloud copy was last saved (from Dropbox)
+let _peekRev = '';             // rev seen by the last peek (not adopted)
+async function dbxPull(peek) {
   const tok = await dbxAccessToken();
   const res = await fetch('https://content.dropboxapi.com/2/files/download', {
     method: 'POST',
@@ -4304,7 +4618,13 @@ async function dbxPull() {
     throw new Error('Dropbox download failed: HTTP ' + res.status + ' ' + txt.slice(0, 120));
   }
   const meta = res.headers.get('dropbox-api-result');
-  if (meta) { try { setDbxRev(JSON.parse(meta).rev); } catch (e) {} }
+  if (meta) {
+    try {
+      const m = JSON.parse(meta);
+      if (peek) _peekRev = m.rev; else setDbxRev(m.rev);
+      lastRemoteModified = m.server_modified || '';
+    } catch (e) {}
+  }
   const text = await res.text();
   if (!text) return null;
   return JSON.parse(text);
@@ -4616,9 +4936,11 @@ async function pushToCloud() {
   return dbxPush();
 }
 
-async function pullFromCloud() {
+// peek=true: look at the cloud copy without adopting it, so a later push from
+// this device is still checked against the version it last synced.
+async function pullFromCloud(peek) {
   if (syncProvider() === 'onedrive') return odPull();
-  return dbxPull();
+  return dbxPull(peek);
 }
 
 // Reason the last pull failed, so the UI can say something specific instead
@@ -5151,6 +5473,11 @@ async function handleSave() {
       }
       return;
     }
+    if (/Another device saved first/.test(e.message)) {
+      setSyncStatus('error', 'Conflict \u2014 tap to review');
+      openUnsavedReview(false);
+      return;
+    }
     alert(providerName() + ' sync failed: ' + e.message + '\n\nData was saved on this device. Check the connection under ☁️ Sync settings.');
   }
 }
@@ -5186,6 +5513,9 @@ function saveState() {
 // Called from pushUndo(), which runs at the start of essentially every
 // mutating action; the debounce lets the mutation finish before we snapshot.
 function markDirty() {
+  // Remember when this device first got ahead of the cloud, so a stale phone
+  // can say "unsaved changes since Nov 10" instead of looking current.
+  try { if (!dataDirty || !localStorage.getItem(UNSAVED_KEY + 'Since')) localStorage.setItem(UNSAVED_KEY + 'Since', new Date().toISOString()); } catch (e) {}
   dataDirty = true;
   try { localStorage.setItem(UNSAVED_KEY, '1'); } catch (e) {}
   if (_saveStateTimer) clearTimeout(_saveStateTimer);
@@ -5206,9 +5536,10 @@ function clearDirty() {
     try {
       cleanState = captureState();
       localStorage.setItem(CLEAN_KEY, cleanState);
+      localStorage.setItem(CLEAN_KEY + 'At', new Date().toISOString());
     } catch (e) { /* quota or serialise failure: reconcile just no-ops */ }
   }
-  try { localStorage.removeItem(UNSAVED_KEY); } catch (e) {}
+  try { localStorage.removeItem(UNSAVED_KEY); localStorage.removeItem(UNSAVED_KEY + 'Since'); } catch (e) {}
   syncDirtyUI();
 }
 
@@ -5501,6 +5832,12 @@ function getExpenseAmountForMonth(id, yr, mo) {
     if (_item.endYr !== undefined) {
       if (yr > _item.endYr || (yr === _item.endYr && mo > _item.endMo)) return 0;
     }
+  }
+  // Card "Other charges" and cash-back lines belong to one statement month
+  // only: they never carry forward into later months.
+  if (_item && (_item.ccOtherCharges || _item.ccCashBack)) {
+    const exact = (expenseHistory[id] || []).find(h => h.yr === yr && h.mo === mo);
+    return exact && exact.amount !== undefined ? exact.amount : 0;
   }
   const entry = _historyEntryFor(id, yr, mo);
   if (entry && entry.amount !== undefined) return entry.amount;
@@ -6035,7 +6372,8 @@ function renderExpenses() {
   const today = new Date().getDate();
 
   // Sort + filter
-  let rows = budget.expenses.slice();
+  // Card "Other charges" / cash-back lines only show in months that have one
+  let rows = budget.expenses.filter(e => !((e.ccOtherCharges || e.ccCashBack) && !getExpenseAmountForMonth(e.id, calYear, calMonth)));
   if (expSourceFilter !== null) rows = rows.filter(e => (getExpenseSourceForMonth(e.id, calYear, calMonth) || '') === expSourceFilter);
   if (expSortCol) {
     rows.sort((a, b) => {
@@ -7532,6 +7870,7 @@ function captureState() {
     monthlyInvests:  monthlyInvests,
     rogersPoints:    cardRewards,
     ccActualSpend:   ccActualSpend,
+    creditCards:     creditCards,
     bankAccounts:    bankAccounts,
     monthlyBankAccounts: monthlyBankAccounts,
     mortgageData:    JSON.parse(JSON.stringify(mortgageData)),
@@ -12811,6 +13150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   detectAppVersion();
   syncUndoBtn();
   seedCleanState();
+  updateReenterPill();
   // If Dropbox has just redirected back with an authorization code, finish the
   // exchange before the startup sync decides whether we are configured.
   if (location.search.indexOf('code=') !== -1) {
@@ -13970,12 +14310,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
     <div id="unsaved-sub" style="font-family:var(--font-mono);font-size:0.75em;color:var(--muted);margin-bottom:18px"></div>
     <div id="unsaved-body"></div>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-top:20px">
-      <button class="save-btn" style="width:100%;justify-content:center;box-sizing:border-box" onclick="unsavedPushMine()">
+    <div id="uc-btns" style="display:flex;flex-direction:column;gap:8px;margin-top:20px">
+      <button id="uc-push-btn" class="save-btn" style="width:100%;justify-content:center;box-sizing:border-box" onclick="unsavedPushMine()">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 1H3a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V4l-3-3z"></path><path d="M11 1v4H5V1M5 9h6"></path></svg>
-        Push this device's data
+        <span class="uc-push-label">Push this device's data</span>
       </button>
-      <button class="reset-btn" onclick="unsavedUseCloud()">Discard mine, use the cloud copy</button>
+      <button id="uc-cloud-btn" class="reset-btn" onclick="unsavedUseCloud()">Discard mine, use the cloud copy</button>
       <button class="btn-secondary" style="width:100%" onclick="closeUnsavedReview()">Decide later</button>
     </div>
   </div>
