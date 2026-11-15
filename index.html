@@ -10681,9 +10681,7 @@ function _cardEffectiveRecurring(card, yr, mo) {
 
 // Spending on a card beyond its recurring bills (only known once a statement is entered)
 function cardDiscretionarySpend(card, yr, mo) {
-  const actual = getCCActual(card.id, yr, mo);
-  if (actual === null) return 0;
-  return Math.max(0, actual - _cardEffectiveRecurring(card, yr, mo).effectiveRecurring);
+  return Math.max(0, cardStatementBalance(card, yr, mo) - _cardEffectiveRecurring(card, yr, mo).effectiveRecurring);
 }
 
 function computeCardMetrics(card, yr, mo) {
@@ -10723,7 +10721,7 @@ function computeCardsOverview(yr, mo) {
   const per = creditCards.map((c, i) => {
     const r = _cardEffectiveRecurring(c, yr, mo);
     const stmt = cardStatementBalance(c, yr, mo);
-    return { card: c, i, stmt, recurring: r.effectiveRecurring, other: Math.max(0, stmt - r.effectiveRecurring) };
+    return { card: c, i, stmt, status: cardBalanceStatus(c, yr, mo), recurring: r.effectiveRecurring, other: Math.max(0, stmt - r.effectiveRecurring) };
   });
   const totalRecurring = per.reduce((s, x) => s + x.recurring, 0);
   const totalBalance = per.reduce((s, x) => s + x.stmt, 0);
@@ -10744,17 +10742,21 @@ function cardsOverviewInnerHtml(yr, mo) {
   const o = computeCardsOverview(yr, mo);
   if (!o) return '';
   const rem = o.remaining;
+  const nProj = o.per.filter(x => x.status === 'projected').length;
+  const nFinal = o.per.filter(x => x.status === 'final').length;
+  const allFinal = nFinal === o.per.length;
+  const balLabel = allFinal ? 'Final balance' : nProj ? 'Projected balance' : 'Total balance';
   const tiles =
     '<div class="rogers-meters" style="padding:16px 20px 10px;grid-template-columns:repeat(3, 1fr);margin-bottom:0">' +
       '<div class="rogers-meter"><div class="rm-label">Card budget</div>' +
         '<div class="rm-value">' + fmt(Math.max(0, o.budget)) + '</div>' +
         '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">leftover + recurring</div></div>' +
-      '<div class="rogers-meter"><div class="rm-label">Total balance</div>' +
+      '<div class="rogers-meter"><div class="rm-label">' + balLabel + '</div>' +
         '<div class="rm-value">' + fmt(o.totalBalance) + '</div>' +
         '<div style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">' + _ccChangeHtml(o.totalBalance, o.prevBalance, 'all cards this month') + '</div></div>' +
       '<div class="rogers-meter"><div class="rm-label">Budget balance</div>' +
         '<div class="rm-value" style="color:' + (rem >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' + (rem >= 0 ? '+' : '-') + fmt(Math.abs(rem)) + '</div>' +
-        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (rem >= 0 ? 'left to spend' : 'over budget') + '</div></div>' +
+        '<div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">' + (rem >= 0 ? 'left to spend' : 'over budget') + (allFinal ? '' : nProj ? ' (projected)' : ' (estimated)') + '</div></div>' +
     '</div>';
   // Bar: each card's balance as a share of the budget (or of total spend when over)
   const scale = Math.max(o.budget, o.totalBalance) || 1;
@@ -10766,7 +10768,7 @@ function cardsOverviewInnerHtml(yr, mo) {
     ? '<div style="position:relative;margin:0 20px;height:0"><div style="position:absolute;left:' + (o.budget / scale * 100) + '%;top:-12px;width:2px;height:14px;background:var(--expense-red)" title="Budget limit"></div></div>'
     : '';
   const legend = '<div class="cc-ov-legend">' +
-    o.per.map(x => '<span><i style="background:' + ccColor(x.i) + '"></i>' + escHtml(x.card.name) + ' <span style="color:var(--text)">' + fmt(x.stmt) + '</span></span>').join('') +
+    o.per.map(x => '<span><i style="background:' + ccColor(x.i) + '"></i>' + escHtml(x.card.name) + ' <span style="color:var(--text)">' + fmt(x.stmt) + '</span>' + ccStatusTag(x.status) + '</span>').join('') +
     (rem < 0 ? '<span style="color:var(--expense-red)">| budget limit ' + fmt(Math.max(0, o.budget)) + '</span>' : '') +
     '</div>';
   return tiles + bar + overMark + legend;
@@ -10788,7 +10790,8 @@ function ccOpenSet() { return _ccOpen || (_ccOpen = new Set()); }
 
 function cardSummaryHtml(card, m) {
   const other = Math.max(0, m.stmtBalance - m.effectiveRecurring);
-  return '<span><span class="k">Balance</span><span style="color:var(--text)">' + fmt(m.stmtBalance) + '</span></span>' +
+  return '<span><span class="k">Balance</span><span style="color:var(--text)">' + fmt(m.stmtBalance) + '</span>' +
+      ccStatusTag(cardBalanceStatus(card, calYear, calMonth)) + '</span>' +
     '<span><span class="k">Recurring</span><span style="color:var(--text)">' + fmt(m.effectiveRecurring) + '</span></span>' +
     '<span><span class="k">Other</span><span style="color:var(--text)">' + fmt(other) + '</span></span>';
 }
@@ -10822,20 +10825,100 @@ function refreshAllCardMetrics() {
   updateCardsOverview();
 }
 
-// Total statement balance for a card in a given month.
-// If an actual statement is entered, that's the balance; otherwise it's the projected
-// net recurring (after cash back) for that month.
-function cardStatementBalance(card, yr, mo) {
-  const cardItems = budget.expenses
+// ── Statement balance: final, projected or estimated ──
+function _localYMD(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// The statement for month `mo` runs from statementDayStart of the previous
+// month to statementDayEnd of `mo` (e.g. Oct 15 → Nov 14 is the Nov statement).
+function cardPeriod(card, yr, mo) {
+  const sd = card.statementDayStart || 15, ed = card.statementDayEnd || 14;
+  const dim = (y, m) => new Date(y, m + 1, 0).getDate();
+  const sy = mo === 0 ? yr - 1 : yr, sm = mo === 0 ? 11 : mo - 1;
+  return { start: new Date(sy, sm, Math.min(sd, dim(sy, sm))), end: new Date(yr, mo, Math.min(ed, dim(yr, mo))) };
+}
+
+// Project this statement from a mid-cycle balance:
+//   balance now + recurring bills not yet charged + other spending at the current pace
+function cardProjection(card, yr, mo) {
+  if (card.currentBalance === undefined || card.currentBalance === null || !card.currentBalanceAsOf) return null;
+  const p = cardPeriod(card, yr, mo);
+  const parts = card.currentBalanceAsOf.split('-').map(Number);
+  const asOf = new Date(parts[0], parts[1] - 1, parts[2]);
+  if (asOf < p.start || asOf > p.end) return null;
+  const DAY = 86400000;
+  const totalDays = Math.round((p.end - p.start) / DAY) + 1;
+  const elapsed = Math.round((asOf - p.start) / DAY) + 1;
+  const remainingDays = Math.max(0, totalDays - elapsed);
+  let posted = 0, upcoming = 0;
+  budget.expenses
     .filter(e => !e.ccOtherCharges && !e.ccCashBack && getExpenseSourceForMonth(e.id, yr, mo) === card.expenseSource)
-    .map(e => ({ amount: getExpenseAmountForMonth(e.id, yr, mo) }))
-    .filter(e => e.amount > 0);
-  const recurringTotal = cardItems.reduce((s, x) => s + x.amount, 0);
-  const cashBack = cardRewardsFor(card, yr, mo);
-  const effectiveRecurring = Math.max(0, recurringTotal - cashBack);
+    .forEach(e => {
+      const amt = getExpenseAmountForMonth(e.id, yr, mo);
+      if (!(amt > 0)) return;
+      const d = parseDueDays(getExpenseDueForMonth(e.id, yr, mo))[0];
+      if (!d) { posted += amt; return; }                 // no due day: assume already charged
+      // Place the bill on its date inside this statement period
+      const inPrev = d >= p.start.getDate() && d !== 999 ? true : false;
+      const by = inPrev ? p.start.getFullYear() : p.end.getFullYear();
+      const bm = inPrev ? p.start.getMonth() : p.end.getMonth();
+      const billDate = new Date(by, bm, Math.min(d === 999 ? 31 : d, new Date(by, bm + 1, 0).getDate()));
+      if (billDate > asOf) upcoming += amt; else posted += amt;
+    });
+  const balance = card.currentBalance;
+  const spentSoFar = Math.max(0, balance - posted);
+  const pace = elapsed > 0 ? spentSoFar / elapsed : 0;
+  const paceExtra = pace * remainingDays;
+  return {
+    balance, asOf: card.currentBalanceAsOf, upcoming, paceExtra, remainingDays,
+    projected: balance + upcoming + paceExtra,
+  };
+}
+
+// 'final' (statement entered), 'projected' (from a mid-cycle balance) or
+// 'estimate' (recurring bills only)
+function cardBalanceStatus(card, yr, mo) {
+  if (getCCActual(card.id, yr, mo) !== null) return 'final';
+  if (cardProjection(card, yr, mo)) return 'projected';
+  return 'estimate';
+}
+const CC_STATUS_LABEL = { final: 'final', projected: 'projected', estimate: 'est.' };
+function ccStatusTag(st) {
+  const c = st === 'final' ? 'var(--income-green)' : st === 'projected' ? 'var(--accent2)' : 'var(--muted)';
+  return '<span style="font-size:0.85em;color:' + c + ';border:1px solid ' + c + ';border-radius:4px;padding:0 4px;margin-left:5px;opacity:.9">' + CC_STATUS_LABEL[st] + '</span>';
+}
+
+// Total statement balance for a card in a given month: the actual statement if
+// entered, else a projection from the current balance, else net recurring.
+function cardStatementBalance(card, yr, mo) {
   const actual = getCCActual(card.id, yr, mo);
   if (actual !== null) return actual;
-  return effectiveRecurring;
+  const proj = cardProjection(card, yr, mo);
+  if (proj) return proj.projected;
+  return _cardEffectiveRecurring(card, yr, mo).effectiveRecurring;
+}
+
+function _otherSubText(card, yr, mo) {
+  const st = cardBalanceStatus(card, yr, mo);
+  return st === 'final' ? 'beyond recurring' : st === 'projected' ? 'projected, beyond recurring' : 'enter a balance to project';
+}
+
+// Text under the balance input: what the balance means for this statement
+function cardProjectionHtml(card, yr, mo) {
+  const actual = getCCActual(card.id, yr, mo);
+  if (actual !== null) {
+    return '<span style="color:var(--income-green)">Statement closed</span> &middot; final balance <span style="color:var(--text)">' + fmt(actual) + '</span>';
+  }
+  const proj = cardProjection(card, yr, mo);
+  if (proj) {
+    return 'Projected statement <span style="color:var(--text);font-weight:600">' + fmt(proj.projected) + '</span>' +
+      '<br>' + fmt(proj.balance) + ' now + ' + fmt(proj.upcoming) + ' bills to come + ' + fmt(proj.paceExtra) +
+      ' at your current pace (' + proj.remainingDays + ' day' + (proj.remainingDays === 1 ? '' : 's') + ' left)';
+  }
+  if (card.currentBalance !== undefined && card.currentBalanceAsOf) {
+    return 'Balance from ' + fmtAsOf(card.currentBalanceAsOf) + ' is outside this statement period';
+  }
+  return 'Enter your balance mid-cycle to project this statement';
 }
 
 // ─── BUSINESS MODULE ─────────────────────────────────────────────────────
@@ -11803,6 +11886,7 @@ function renderCreditCardsPage() {
               ' title="Clear">✕</button>' +
           '</div>' +
         '</div>' +
+        '<div id="cc-proj-' + card.id + '" style="font-size:0.7857em;color:var(--muted);font-family:var(--font-mono);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);line-height:1.6">' + cardProjectionHtml(card, yr, mo) + '</div>' +
       '</div>';
 
     // Actual statement panel — pre-compute HTML so no nested template braces issue
@@ -11890,7 +11974,7 @@ function renderCreditCardsPage() {
         <!-- Meters -->
         <div class="rogers-meters" style="padding:16px 20px;border-bottom:1px solid var(--border);grid-template-columns:repeat(3, 1fr)">
           <div class="rogers-meter">
-            <div class="rm-label">Monthly balance</div>
+            <div class="rm-label">Monthly balance${ccStatusTag(cardBalanceStatus(card, yr, mo))}</div>
             <div class="rm-value" style="color:var(--text)">${fmt(_stmtBalance)}</div>
             <div class="rm-sub" style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">${_stmtChangeHtml}</div>
           </div>
@@ -11902,7 +11986,7 @@ function renderCreditCardsPage() {
           <div class="rogers-meter">
             <div class="rm-label">Other spending</div>
             <div class="rm-value">${fmt(Math.max(0, _stmtBalance - effectiveRecurring))}</div>
-            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_actual !== null ? 'beyond recurring' : 'enter statement below'}</div>
+            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_otherSubText(card, yr, mo)}</div>
           </div>
         </div>
         <!-- Charges list -->
@@ -11953,29 +12037,35 @@ function setCCBalance(cardId, val) {
   const card = creditCards.find(c => c.id === cardId);
   if (!card) return;
   const n = parseFloat(val);
-  if (isNaN(n) || val === '' || val === null) {
+  const newBal = (isNaN(n) || val === '' || val === null) ? undefined : n;
+  if (newBal === card.currentBalance) return;   // blur after typing: nothing changed
+  pushUndo();
+  if (newBal === undefined) {
     delete card.currentBalance;
     delete card.currentBalanceAsOf;
   } else {
-    card.currentBalance = n;
-    card.currentBalanceAsOf = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    card.currentBalance = newBal;
+    card.currentBalanceAsOf = _localYMD(new Date()); // local date, not UTC
   }
   // Update the as-of label in place
   const asOfEl = document.getElementById('cc-bal-asof-' + cardId);
   if (asOfEl) {
     asOfEl.textContent = card.currentBalanceAsOf ? 'as of ' + fmtAsOf(card.currentBalanceAsOf) : '';
   }
+  refreshAllCardMetrics();
 }
 
 function clearCCBalance(cardId) {
   const card = creditCards.find(c => c.id === cardId);
   if (!card) return;
+  pushUndo();
   delete card.currentBalance;
   delete card.currentBalanceAsOf;
   const input = document.getElementById('cc-bal-input-' + cardId);
   if (input) input.value = '';
   const asOfEl = document.getElementById('cc-bal-asof-' + cardId);
   if (asOfEl) asOfEl.textContent = '';
+  refreshAllCardMetrics();
 }
 
 function saveOtherChargesDue(cardId, val) {
@@ -12260,7 +12350,11 @@ function updateCardMetrics(cardId) {
   if (val(1)) val(1).textContent = fmt(m.effectiveRecurring);
   if (sub(1)) sub(1).textContent = m.cashBack > 0 ? 'bills, after cash back' : 'bills on this card';
   if (val(2)) val(2).textContent = fmt(Math.max(0, m.stmtBalance - m.effectiveRecurring));
-  if (sub(2)) sub(2).textContent = m.actual !== null ? 'beyond recurring' : 'enter statement below';
+  if (sub(2)) sub(2).textContent = _otherSubText(card, yr, mo);
+  const lab0 = tiles[0] && tiles[0].querySelector('.rm-label');
+  if (lab0) lab0.innerHTML = 'Monthly balance' + ccStatusTag(cardBalanceStatus(card, yr, mo));
+  const projEl = document.getElementById('cc-proj-' + card.id);
+  if (projEl) projEl.innerHTML = cardProjectionHtml(card, yr, mo);
 
   // Progress bar
   const bar = body.querySelector('.rogers-progress-fill');
@@ -12412,7 +12506,7 @@ function saveAddCardModal() {
       if (card.otherChargesAutoAdd) syncAllOtherChargesExpenses(card.id);
       if (balRaw !== '' && !isNaN(bal)) {
         card.currentBalance = bal;
-        card.currentBalanceAsOf = new Date().toISOString().slice(0, 10);
+        card.currentBalanceAsOf = _localYMD(new Date());
       } else if (balRaw === '') {
         delete card.currentBalance;
         delete card.currentBalanceAsOf;
@@ -12426,7 +12520,7 @@ function saveAddCardModal() {
     if (cardModalLogoData) newCard.logo = cardModalLogoData;
     if (balRaw !== '' && !isNaN(bal)) {
       newCard.currentBalance = bal;
-      newCard.currentBalanceAsOf = new Date().toISOString().slice(0, 10);
+      newCard.currentBalanceAsOf = _localYMD(new Date());
     }
     creditCards.push(newCard);
   }
