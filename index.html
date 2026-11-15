@@ -566,6 +566,11 @@
     overflow: hidden;
     transition: max-height 0.3s ease;
   }
+  .cc-sum { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; font-family:var(--font-mono); font-size:0.7857em; }
+  .cc-sum .k { color:var(--muted); margin-right:5px; }
+  .cc-card .section-chevron { transition: transform .2s; }
+  .cc-card.cc-open .section-chevron { transform: rotate(180deg); }
+  .cc-card.cc-open .cc-sum { display:none; }
   .section-body.is-open {
     overflow: visible;
     max-height: none !important;
@@ -10439,9 +10444,9 @@ function setCCActual(cardId, yr, mo, val) {
     renderExpenses();
     updateSummary();
   }
-  // Update the actual-spend row and charges list in-place (preserves input focus)
-  updateActualSpendRow(cardId);
-  updateChargesList(cardId);
+  // Update tiles in-place (preserves input focus). Every card refreshes, because
+  // spending on one card changes the budget left for the others.
+  refreshAllCardMetrics();
 }
 
 function updateActualSpendRow(cardId) {
@@ -10450,20 +10455,8 @@ function updateActualSpendRow(cardId) {
   const yr = calYear, mo = calMonth;
   const actual = getCCActual(cardId, yr, mo);
 
-  const cardItems = budget.expenses
-    .filter(e => !e.ccOtherCharges && !e.ccCashBack && getExpenseSourceForMonth(e.id, yr, mo) === card.expenseSource)
-    .map(e => ({ amount: getExpenseAmountForMonth(e.id, yr, mo) }))
-    .filter(e => e.amount > 0);
-  const cashBack = cardRewardsFor(card, yr, mo);
-  const recurringTotal = cardItems.reduce((s, x) => s + x.amount, 0);
-  const effectiveRecurring = Math.max(0, recurringTotal - cashBack);
-  const totalIncome = totalActualMonthlyIncome(yr, mo);
-  // Exclude auto-generated "other charges" expenses so entering a statement doesn't
-  // deflate leftover / the comparison baseline (they mirror the actual entry).
-  const totalExpenses = budget.expenses.reduce((s, e) => s + ((e.ccOtherCharges || e.ccCashBack) ? 0 : getExpenseAmount(e.id)), 0);
-  const leftover = totalIncome - totalExpenses;
-  // Total card budget = leftover + net recurring (matches the tile & render function).
-  const cardBudget = leftover + effectiveRecurring;
+  // Total card budget from the shared model (matches the tiles & render function).
+  const cardBudget = computeCardMetrics(card, yr, mo).cardBudget;
 
   const sectionId = 'cc-section-' + cardId;
   const row = document.getElementById('cc-actual-row-' + cardId);
@@ -10487,6 +10480,8 @@ function updateActualSpendRow(cardId) {
 
   const amtCell = row.querySelector('.cc-actual-amt');
   if (amtCell) amtCell.innerHTML = amtHtml;
+  const subEl = document.getElementById('cc-actual-sub-' + cardId);
+  if (subEl) subEl.innerHTML = 'Enter when your ' + MONTHS[mo] + ' statement is available &middot; total card budget: ' + fmt(budgetRef);
 }
 
 // Build just the inner charges list HTML for a card — used both by full render
@@ -10683,6 +10678,98 @@ function updateChargesList(cardId) {
   const el = document.getElementById('cc-charges-inner-' + cardId);
   if (!el) return;
   el.innerHTML = buildChargesInnerHtml(card);
+}
+
+// ── Shared card budget model ──
+// All cards draw on ONE household leftover. Each card's budget is that leftover,
+// minus what the OTHER cards have already spent beyond their recurring bills,
+// plus this card's own recurring bills (already counted in leftover).
+function _cardEffectiveRecurring(card, yr, mo) {
+  const recurringTotal = budget.expenses
+    .filter(e => !e.ccOtherCharges && !e.ccCashBack && getExpenseSourceForMonth(e.id, yr, mo) === card.expenseSource)
+    .map(e => getExpenseAmountForMonth(e.id, yr, mo))
+    .filter(a => a > 0)
+    .reduce((s, a) => s + a, 0);
+  const cashBack = cardRewardsFor(card, yr, mo);
+  return { recurringTotal, cashBack, effectiveRecurring: Math.max(0, recurringTotal - cashBack) };
+}
+
+// Spending on a card beyond its recurring bills (only known once a statement is entered)
+function cardDiscretionarySpend(card, yr, mo) {
+  const actual = getCCActual(card.id, yr, mo);
+  if (actual === null) return 0;
+  return Math.max(0, actual - _cardEffectiveRecurring(card, yr, mo).effectiveRecurring);
+}
+
+function computeCardMetrics(card, yr, mo) {
+  const totalIncome = totalActualMonthlyIncome(yr, mo);
+  // Exclude auto-generated "other charges"/cash-back lines: they mirror statement
+  // entries, which are accounted for explicitly below.
+  const totalExpenses = budget.expenses.reduce((s, e) =>
+    s + ((e.ccOtherCharges || e.ccCashBack) ? 0 : getExpenseAmountForMonth(e.id, yr, mo)), 0);
+  const leftover = totalIncome - totalExpenses;
+  const r = _cardEffectiveRecurring(card, yr, mo);
+  const otherCardsSpend = creditCards
+    .filter(c => c.id !== card.id)
+    .reduce((s, c) => s + cardDiscretionarySpend(c, yr, mo), 0);
+  const sharedLeftover = leftover - otherCardsSpend;
+  const cardBudget = sharedLeftover + r.effectiveRecurring;
+  const stmtBalance = cardStatementBalance(card, yr, mo);
+  return {
+    leftover, sharedLeftover, otherCardsSpend,
+    recurringTotal: r.recurringTotal, cashBack: r.cashBack, effectiveRecurring: r.effectiveRecurring,
+    cardBudget,
+    available: sharedLeftover + r.cashBack,
+    usedPct: cardBudget > 0 ? Math.min(100, Math.round((r.effectiveRecurring / cardBudget) * 100)) : 100,
+    stmtBalance,
+    budgetBalance: cardBudget - stmtBalance,
+    actual: getCCActual(card.id, yr, mo),
+  };
+}
+
+function cardBudgetSubLabel(m) {
+  return m.otherCardsSpend > 0 ? 'leftover + recurring \u2212 other cards' : 'leftover + recurring';
+}
+
+// Cards start collapsed to a one-line summary; this remembers which ones the
+// user has opened so edits and month changes don't snap them shut.
+var _ccOpen;
+function ccOpenSet() { return _ccOpen || (_ccOpen = new Set()); }
+
+function cardSummaryHtml(card, m) {
+  const bb = m.budgetBalance;
+  return '<span><span class="k">Balance</span><span style="color:var(--text)">' + fmt(m.stmtBalance) + '</span></span>' +
+    '<span><span class="k">Budget</span><span style="color:var(--text)">' + fmt(Math.max(0, m.cardBudget)) + '</span></span>' +
+    '<span style="color:' + (bb >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' +
+      (bb >= 0 ? '+' : '-') + fmt(Math.abs(bb)) + (bb >= 0 ? ' under' : ' over') + '</span>';
+}
+
+function ccToggleCard(id) {
+  const sec = document.getElementById('cc-section-' + id);
+  const el = document.getElementById('cc-section-' + id + '-body');
+  if (!sec || !el) return;
+  if (ccOpenSet().has(id)) {
+    ccOpenSet().delete(id);
+    sec.classList.remove('cc-open');
+    el.style.overflow = 'hidden';
+    el.style.maxHeight = el.scrollHeight + 'px';
+    requestAnimationFrame(() => requestAnimationFrame(() => { el.style.maxHeight = '0px'; }));
+  } else {
+    ccOpenSet().add(id);
+    sec.classList.add('cc-open');
+    el.style.overflow = 'hidden';
+    el.style.maxHeight = el.scrollHeight + 'px';
+    const done = () => {
+      el.removeEventListener('transitionend', done);
+      if (ccOpenSet().has(id)) { el.style.maxHeight = 'none'; el.style.overflow = 'visible'; }
+    };
+    el.addEventListener('transitionend', done);
+  }
+}
+
+// Refresh the tiles of every card (spending on one card changes what's left for the others)
+function refreshAllCardMetrics() {
+  creditCards.forEach(c => { updateCardMetrics(c.id); updateActualSpendRow(c.id); });
 }
 
 // Total statement balance for a card in a given month.
@@ -11605,11 +11692,8 @@ function renderCreditCardsPage() {
     const periodLabel = MONTHS_SHORT[pStart.getMonth()] + ' ' + (card.statementDayStart||15) + ' → ' +
                         MONTHS_SHORT[pEnd.getMonth()] + ' ' + (card.statementDayEnd||14) + ', ' + pEnd.getFullYear();
 
-    const totalIncome   = totalActualMonthlyIncome(yr, mo);
-    // Exclude auto-generated "other charges" expenses so entering a statement doesn't
-    // deflate leftover / the comparison baseline (they mirror the actual entry).
-    const totalExpenses = budget.expenses.reduce((s, e) => s + ((e.ccOtherCharges || e.ccCashBack) ? 0 : getExpenseAmount(e.id)), 0);
-    const leftover      = totalIncome - totalExpenses;
+    const _m = computeCardMetrics(card, yr, mo);
+    const leftover = _m.sharedLeftover;
 
     const cardItems = budget.expenses
       .filter(e => !e.ccOtherCharges && !e.ccCashBack && getExpenseSourceForMonth(e.id, yr, mo) === card.expenseSource)
@@ -11691,7 +11775,7 @@ function renderCreditCardsPage() {
     }
     // Budget balance: how much of the card budget is left after this month's statement.
     // Positive = under budget (green +), negative = over budget (red -).
-    const _budgetBalance = Math.max(0, cardBudget) - _stmtBalance;
+    const _budgetBalance = _m.budgetBalance;
     // Compare vs "Total Card Budget" (leftover + net recurring) — the max you could put
     // on the card. This is the tile the under/over-budget figure now references.
     const _budgetRef = Math.max(0, cardBudget);
@@ -11714,7 +11798,7 @@ function renderCreditCardsPage() {
               '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1"/><path d="M1 7h14"/><path d="M5 11h2"/><path d="M9 11h2"/></svg>' +
               ' Actual Statement Total' +
             '</div>' +
-            '<div style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">Enter when your ' + MONTHS_SHORT[mo] + ' statement is available &middot; total card budget: ' + fmt(_budgetRef) + '</div>' +
+            '<div id="cc-actual-sub-' + card.id + '" style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">Enter when your ' + MONTHS_SHORT[mo] + ' statement is available &middot; total card budget: ' + fmt(_budgetRef) + '</div>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px">' +
             '<div class="cc-actual-amt" style="display:flex;align-items:center;min-width:120px;justify-content:flex-end">' + _amtDisplay + '</div>' +
@@ -11735,13 +11819,14 @@ function renderCreditCardsPage() {
       '</div>';
 
     html += `
-    <div class="section" style="margin-bottom:20px" id="${cardId}">
-      <div class="section-header" onclick="toggleSection('${cardId}-body')" style="cursor:pointer">
-        <div class="section-title" style="gap:12px">
+    <div class="section cc-card${ccOpenSet().has(card.id) ? ' cc-open' : ''}" style="margin-bottom:20px" id="${cardId}">
+      <div class="section-header" onclick="ccToggleCard('${card.id}')" style="cursor:pointer;align-items:flex-start">
+        <div class="section-title" style="gap:12px;align-items:flex-start">
           ${logoHtml}
           <div>
             <div style="font-weight:600;font-size:1em">${escHtml(card.name)}</div>
             <div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:2px">Statement: ${periodLabel}</div>
+            <div class="cc-sum" id="cc-sum-${card.id}">${cardSummaryHtml(card, _m)}</div>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
@@ -11750,24 +11835,24 @@ function renderCreditCardsPage() {
           <svg class="section-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 4 6 8 10 4"/></svg>
         </div>
       </div>
-      <div class="section-body" id="${cardId}-body" style="max-height:none">
+      <div class="section-body" id="${cardId}-body" style="${ccOpenSet().has(card.id) ? 'max-height:none;overflow:visible' : 'max-height:0'}">
         ${currentBalancePanelHtml}
         <!-- Meters -->
         <div class="rogers-meters" style="padding:16px 20px;border-bottom:1px solid var(--border);grid-template-columns:repeat(3, 1fr)">
           <div class="rogers-meter">
             <div class="rm-label">Total card budget</div>
             <div class="rm-value">${fmt(Math.max(0, cardBudget))}</div>
-            <div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">leftover + recurring</div>
+            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${cardBudgetSubLabel(_m)}</div>
           </div>
           <div class="rogers-meter">
             <div class="rm-label">Monthly balance</div>
             <div class="rm-value" style="color:var(--text)">${fmt(_stmtBalance)}</div>
-            <div style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">${_stmtChangeHtml}</div>
+            <div class="rm-sub" style="font-size:0.7em;font-family:var(--font-mono);margin-top:3px">${_stmtChangeHtml}</div>
           </div>
           <div class="rogers-meter">
             <div class="rm-label">Budget balance</div>
             <div class="rm-value" style="color:${_budgetBalance >= 0 ? 'var(--income-green)' : 'var(--expense-red)'}">${(_budgetBalance >= 0 ? '+' : '-') + fmt(Math.abs(_budgetBalance))}</div>
-            <div style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_budgetBalance >= 0 ? 'under budget' : 'over budget'}</div>
+            <div class="rm-sub" style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono);margin-top:3px">${_budgetBalance >= 0 ? 'under budget' : 'over budget'}</div>
           </div>
         </div>
         <!-- Progress bar -->
@@ -12018,8 +12103,7 @@ function setCashBack(cardId, val) {
   updateSummary();
   // Update the card's displayed values in-place without re-rendering the whole page
   // (re-rendering destroys focus and the typed value)
-  updateCardMetrics(cardId);
-  updateChargesList(cardId);
+  refreshAllCardMetrics();
   const sub = document.getElementById('cashback-sub-' + cardId);
   if (sub && card) sub.innerHTML = cardRewardsSubText(card);
 }
@@ -12113,87 +12197,46 @@ function removeCashBackExpense(cardId) {
 function updateCardMetrics(cardId) {
   const card = creditCards.find(c => c.id === cardId);
   if (!card) return;
-
   const yr = calYear, mo = calMonth;
-  const totalIncome   = totalActualMonthlyIncome(yr, mo);
-  // Exclude auto-generated "other charges" expenses so entering a statement doesn't
-  // deflate leftover / the comparison baseline (they mirror the actual entry).
-  const totalExpenses = budget.expenses.reduce((s, e) => s + ((e.ccOtherCharges || e.ccCashBack) ? 0 : getExpenseAmount(e.id)), 0);
-  const leftover      = totalIncome - totalExpenses;
+  const m = computeCardMetrics(card, yr, mo);
+  const sumEl = document.getElementById('cc-sum-' + card.id);
+  if (sumEl) sumEl.innerHTML = cardSummaryHtml(card, m);
+  const body = document.getElementById('cc-section-' + card.id + '-body');
+  if (!body) return;
 
-  const cardItems = budget.expenses
-    .filter(e => !e.ccOtherCharges && !e.ccCashBack && getExpenseSourceForMonth(e.id, yr, mo) === card.expenseSource)
-    .map(e => ({
-      id: e.id, name: e.name,
-      amount: getExpenseAmountForMonth(e.id, yr, mo),
-      due: getExpenseDueForMonth(e.id, yr, mo),
-    }))
-    .filter(e => e.amount > 0);
-
-  const recurringTotal     = cardItems.reduce((s, x) => s + x.amount, 0);
-  const cashBack           = cardRewardsFor(card, yr, mo);
-  const effectiveRecurring = Math.max(0, recurringTotal - cashBack);
-  // Total card budget = leftover + net recurring (matches render function & tiles)
-  const cardBudget = leftover + effectiveRecurring;
-  const available  = leftover + cashBack;
-  const usedPct    = cardBudget > 0 ? Math.min(100, Math.round((effectiveRecurring / cardBudget) * 100)) : 100;
-
-  const sectionId = 'cc-section-' + card.id;
-
-  // Update meters
-  const el = id => document.getElementById(id);
-  const meterEls = document.querySelectorAll(`#${sectionId}-body .rogers-meter .rm-value`);
-  if (meterEls[0]) { meterEls[0].textContent = (leftover < 0 ? '-' : '') + fmt(Math.abs(leftover)); }
-  if (meterEls[1]) {
-    meterEls[1].textContent = fmt(effectiveRecurring);
-    meterEls[1].nextElementSibling.textContent = 'recurring' + (cashBack > 0 ? ' (after cash back)' : '');
-  }
-  if (meterEls[2]) { meterEls[2].textContent = fmt(Math.max(0, cardBudget)); }
-  if (meterEls[3]) {
-    meterEls[3].textContent = (available < 0 ? '-' : '') + fmt(Math.abs(available));
-    meterEls[3].className = 'rm-value ' + (available < 0 ? 'red' : available < effectiveRecurring * 0.15 ? 'amber' : 'green');
-  }
-
-  // Update progress bar
-  const bar = document.querySelector(`#${sectionId}-body .rogers-progress-fill`);
-  if (bar) {
-    bar.style.width = usedPct + '%';
-    bar.className = 'rogers-progress-fill' + (usedPct >= 100 ? ' over' : usedPct >= 80 ? ' warn' : '');
-  }
-
-  // Update charge rows — re-render just the charges div
-  const chargesContainer = document.querySelector(`#${sectionId}-body .rogers-charges-list > div:last-child`);
-  if (chargesContainer) {
-    if (cardItems.length === 0) {
-      chargesContainer.innerHTML = '<div style="font-size:0.8571em;color:var(--muted);padding:6px 0">No expenses linked to this card for this month.</div>';
+  // Tiles: [0] Total card budget, [1] Monthly balance, [2] Budget balance
+  const tiles = body.querySelectorAll('.rogers-meter');
+  const val = i => tiles[i] && tiles[i].querySelector('.rm-value');
+  const sub = i => tiles[i] && tiles[i].querySelector('.rm-sub');
+  if (val(0)) val(0).textContent = fmt(Math.max(0, m.cardBudget));
+  if (sub(0)) sub(0).textContent = cardBudgetSubLabel(m);
+  if (val(1)) val(1).textContent = fmt(m.stmtBalance);
+  if (sub(1)) {
+    const prevMo = mo === 0 ? 11 : mo - 1, prevYr = mo === 0 ? yr - 1 : yr;
+    const prev = cardStatementBalance(card, prevYr, prevMo);
+    if (prev > 0) {
+      const d = m.stmtBalance - prev, up = d >= 0;
+      sub(1).innerHTML = 'vs last month: <span style="color:' + (up ? 'var(--expense-red)' : 'var(--income-green)') + '">' +
+        (up ? '▲' : '▼') + ' ' + fmt(Math.abs(d)) + ' (' + Math.round(Math.abs(d / prev) * 100) + '%)</span>';
     } else {
-      chargesContainer.innerHTML = cardItems.map(item => {
-        const dueTxt  = item.due ? 'Due ' + item.due : '';
-        const dueDay  = parseDueDays(item.due)[0] || 0;
-        const period  = dueDay >= (card.statementDayStart || 15) ? 'next stmt' : 'this stmt';
-        const isHm    = cardHasRewards(card) && card.rewardsAppliesTo === item.id;
-        const dispAmt = isHm && cashBack > 0 ? Math.max(0, item.amount - cashBack) : item.amount;
-        const cbBadge = isHm && cashBack > 0
-          ? ` <span style="font-size:0.75em;background:var(--accent);color:#111;border-radius:3px;padding:1px 5px;font-family:var(--font-mono)">−${fmt(cashBack)} cash back</span>`
-          : '';
-        // Original strikethrough in accent colour, new net amount in red
-        const amtHtml = isHm && cashBack > 0
-          ? `<span style="text-decoration:line-through;color:var(--accent);font-size:0.85em">${fmt(item.amount)}</span> <span style="color:var(--expense-red)">${fmt(dispAmt)}</span>`
-          : fmt(item.amount);
-        return `<div class="rogers-charge-row">
-          <div class="rc-name">${escHtml(item.name)}${cbBadge}</div>
-          <div class="rc-due">${escHtml(dueTxt)}</div>
-          <span class="rc-period">${period}</span>
-          <div class="rc-amt">${amtHtml}</div>
-        </div>`;
-      }).join('') +
-      `<div class="rogers-charge-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:8px;font-weight:600">
-        <div class="rc-name" style="color:var(--muted);font-size:0.9em">Net recurring${cashBack > 0 ? ' (after cash back)' : ''}</div>
-        <div></div><div></div>
-        <div class="rc-amt">${fmt(effectiveRecurring)}</div>
-      </div>`;
+      sub(1).innerHTML = '<span style="color:var(--muted)">total statement balance</span>';
     }
   }
+  if (val(2)) {
+    val(2).textContent = (m.budgetBalance >= 0 ? '+' : '-') + fmt(Math.abs(m.budgetBalance));
+    val(2).style.color = m.budgetBalance >= 0 ? 'var(--income-green)' : 'var(--expense-red)';
+  }
+  if (sub(2)) sub(2).textContent = m.budgetBalance >= 0 ? 'under budget' : 'over budget';
+
+  // Progress bar
+  const bar = body.querySelector('.rogers-progress-fill');
+  if (bar) {
+    bar.style.width = m.usedPct + '%';
+    bar.className = 'rogers-progress-fill' + (m.usedPct >= 100 ? ' over' : m.usedPct >= 80 ? ' warn' : '');
+  }
+
+  // Charges list (includes the Other charges rows)
+  updateChargesList(cardId);
 }
 
 // Add / remove / edit cards
