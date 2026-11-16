@@ -918,6 +918,19 @@
     align-items: center;
   }
   .bank-item:last-child { border-bottom: none; }
+  .cal-entry-move { font-family:var(--font-mono); font-size:0.62em; color:var(--accent2); line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tf-sel { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-sans); font-size:1em; padding:10px 12px; box-sizing:border-box; -webkit-appearance:none; }
+  .acct-tx-row { display:grid; grid-template-columns: 44px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
+  .acct-tx-row:last-child { border-bottom:none; }
+  .acct-tx-row:hover { background:var(--surface2); }
+  .acct-tx-row.upcoming { opacity:.55; }
+  .acct-tx-date { font-family:var(--font-mono); font-size:0.7143em; color:var(--muted); text-align:center; line-height:1.2; }
+  .acct-tx-date b { display:block; font-size:1.5em; color:var(--text); font-weight:500; }
+  .acct-tx-name { font-size:0.9em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acct-tx-sub { font-family:var(--font-mono); font-size:0.7em; color:var(--muted); margin-top:2px; }
+  .acct-tx-amt { font-family:var(--font-mono); font-size:0.9em; text-align:right; white-space:nowrap; }
+  .acct-tx-run { font-family:var(--font-mono); font-size:0.7em; color:var(--muted); text-align:right; margin-top:2px; }
+  .acct-tag { font-family:var(--font-mono); font-size:0.75em; border-radius:4px; padding:0 4px; margin-left:4px; border:1px solid currentColor; opacity:.8; }
 
   .bank-value {
     font-family: var(--font-mono);
@@ -3155,6 +3168,54 @@
 </div>
 
 <!-- INCOME MODAL -->
+<div class="modal-overlay" id="acct-modal" onclick="if(event.target===this)closeAcctModal()">
+  <div class="modal" style="width:600px;max-width:100%">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div id="acct-logo"></div>
+      <div style="flex:1;min-width:0">
+        <h2 id="acct-name" style="margin:0;font-size:1.25em"></h2>
+        <div id="acct-type" style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:2px"></div>
+      </div>
+      <button class="icon-btn" onclick="editBankAccount(_acctModalId)" title="Edit account" style="opacity:1"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg></button>
+      <button onclick="closeAcctModal()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.5em;line-height:1;padding:0 2px">&times;</button>
+    </div>
+    <div id="acct-balance-box" style="margin-top:16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px">
+      <button class="icon-btn" style="opacity:1;width:30px;height:30px" onclick="acctFlipMonth(-1)" aria-label="Previous month">&lsaquo;</button>
+      <div id="acct-month" style="font-family:var(--font-mono);font-size:0.8571em;text-align:center"></div>
+      <button class="icon-btn" style="opacity:1;width:30px;height:30px" onclick="acctFlipMonth(1)" aria-label="Next month">&rsaquo;</button>
+    </div>
+    <div id="acct-tx" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:10px"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px">
+      <button onclick="acctAddDeposit()" style="background:rgba(62,255,163,.10);border:1px solid rgba(62,255,163,.25);color:var(--income-green);border-radius:8px;padding:9px 6px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">+ Deposit</button>
+      <button onclick="acctAddPayment()" style="background:rgba(255,91,122,.13);border:1px solid rgba(255,91,122,.3);color:var(--expense-red);border-radius:8px;padding:9px 6px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">+ Payment</button>
+      <button onclick="openTransferModal(null)" style="background:var(--surface2);border:1px solid var(--border);color:var(--accent2);border-radius:8px;padding:9px 6px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">&#8644; Transfer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="transfer-modal" onclick="if(event.target===this)closeTransferModal()">
+  <div class="modal" style="max-width:440px">
+    <h2 id="transfer-title">Transfer</h2>
+    <div class="form-field"><label>From</label><select id="transfer-from" class="tf-sel"></select></div>
+    <div class="form-field"><label>To</label><select id="transfer-to" class="tf-sel"></select></div>
+    <div class="form-field"><label>Amount (CAD)</label><input type="number" id="transfer-amount" step="0.01" min="0" placeholder="0.00"></div>
+    <div class="form-field"><label>Date</label><input type="date" id="transfer-date" class="tf-sel"></div>
+    <div class="form-field"><label>Note <span style="color:var(--muted);font-size:0.85em">optional</span></label><input type="text" id="transfer-note" placeholder="e.g. Emergency fund"></div>
+    <div class="form-field" style="display:flex;align-items:center;justify-content:space-between">
+      <div><div style="font-size:0.9286em;font-weight:500">Repeat every month</div>
+        <div style="font-size:0.7857em;color:var(--muted);font-family:var(--font-mono);margin-top:2px">Same day each month from this date on.</div></div>
+      <label class="toggle" style="flex-shrink:0;margin-left:16px"><input type="checkbox" id="transfer-repeat"><div class="toggle-track"></div></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="saveTransfer()">Save</button>
+      <button id="transfer-stop-btn" class="btn-secondary" onclick="stopTransfer()" style="display:none" title="Stop from this month on">End</button>
+      <button id="transfer-delete-btn" class="btn-secondary" onclick="deleteTransfer()" style="display:none;color:var(--expense-red)">Delete</button>
+      <button class="btn-secondary" onclick="closeTransferModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="income-modal" onclick="closeIncomeModal(event)">
   <div class="modal">
     <h2 id="modal-title">Edit Income Source</h2>
@@ -3350,6 +3411,16 @@ function bankBadgeHTML(key, size) {
 // MONTHLY_BANK_START
 let monthlyBankAccounts = {};
 // MONTHLY_BANK_END
+
+// ACCOUNT_LINKS_START
+// Transfers between your own accounts (or into an investment):
+//   { id, from, to, amount, yr, mo, day, repeat, endYr?, endMo?, note }
+//   from/to: bank account id, or 'inv:<investmentId>' for an investment
+let bankTransfers = [];
+// Which account paid each card statement, and when:
+//   { 'cardId-YYYY-M': { acct: '<bank account id>', date: 'YYYY-MM-DD' } }
+let ccPayments = {};
+// ACCOUNT_LINKS_END
 
 // BUSINESS_START
 // Business module. Kept separate from personal budget data.
@@ -3719,6 +3790,8 @@ function loadState() {
     else if (saved.rogersPointsRedemptions) cardRewards = saved.rogersPointsRedemptions;
     if (saved.creditCards && Array.isArray(saved.creditCards)) creditCards = saved.creditCards;
     if (saved.ccActualSpend) ccActualSpend = saved.ccActualSpend;
+    if (Array.isArray(saved.bankTransfers)) bankTransfers = saved.bankTransfers;
+    if (saved.ccPayments) ccPayments = saved.ccPayments;
     if (saved.bankAccountsData && Array.isArray(saved.bankAccountsData)) {
       bankAccounts.length = 0;
       saved.bankAccountsData.forEach((a, i) => {
@@ -3989,6 +4062,8 @@ function payloadToCaptureShape(pl) {
     rogersPoints:            pl.cardRewards || {},
     ccActualSpend:           pl.ccActualSpend || {},
     creditCards:             pl.creditCards || [],
+    bankTransfers:           pl.bankTransfers || [],
+    ccPayments:              pl.ccPayments || {},
     bankAccounts:            pl.bankAccountsData || [],
     monthlyBankAccounts:     pl.monthlyBankAccounts || {},
     mortgageData:            pl.mortgageData || {},
@@ -4006,6 +4081,8 @@ const UC_SECTIONS = [
   { key: 'investments',             label: 'Investments',           type: 'list' },
   { key: 'bankAccounts',            label: 'Bank Accounts',         type: 'list' },
   { key: 'creditCards',             label: 'Credit cards',          type: 'list' },
+  { key: 'bankTransfers',           label: 'Transfers',             type: 'list' },
+  { key: 'ccPayments',              label: 'Card payments',         type: 'map' },
   { key: 'businessBookings',        label: 'Business bookings',     type: 'list' },
   { key: 'businessExpenses',        label: 'Business expenses',     type: 'list' },
   { key: 'incomeAmounts',           label: 'Income amounts',        type: 'map' },
@@ -4239,6 +4316,28 @@ function describeChanges(a, b) {
     });
     push(label, lines);
   });
+
+  // Transfers and card payments
+  (() => {
+    const A = {}, B = {}, lines = [];
+    const desc = t => 'Transfer ' + _ucMoney(t.amount) + ' ' + transferEndLabel(t.from) + ' \u2192 ' + transferEndLabel(t.to) +
+      ' on ' + _ucMon(t.yr, t.mo) + ' ' + t.day + (t.repeat ? ' (monthly)' : '');
+    (a.bankTransfers || []).forEach(t => { A[t.id] = t; });
+    (b.bankTransfers || []).forEach(t => { B[t.id] = t; });
+    Object.keys(B).forEach(k => {
+      if (!A[k]) lines.push('Added: ' + desc(B[k]));
+      else if (JSON.stringify(A[k]) !== JSON.stringify(B[k])) lines.push('Changed to: ' + desc(B[k]));
+    });
+    Object.keys(A).forEach(k => { if (!B[k]) lines.push('Removed: ' + desc(A[k])); });
+    const PA = a.ccPayments || {}, PB = b.ccPayments || {};
+    mapKeys(PA, PB).forEach(k => {
+      if (JSON.stringify(PA[k]) === JSON.stringify(PB[k])) return;
+      const t = _ucSplitTail(k, 2);
+      lines.push(nm(t.head) + ', ' + _ucMon(t.tail[0], t.tail[1]) + ' statement: ' +
+        (PB[k] ? 'paid from ' + transferEndLabel(PB[k].acct) + ' on ' + PB[k].date : 'payment account removed'));
+    });
+    push('Transfers & card payments', lines);
+  })();
 
   // Plain objects
   [['mortgageData', 'Mortgage'], ['businessMeta', 'Business settings']].forEach(([key, label]) => {
@@ -4919,6 +5018,8 @@ function buildSavePayload() {
     cardRewards,
     creditCards,
     ccActualSpend,
+    bankTransfers,
+    ccPayments,
     bankAccountsData: bankAccounts,
     monthlyBankAccounts,
     mortgageData,
@@ -4995,6 +5096,8 @@ async function loadFromCloud() {
     else if (saved.rogersPointsRedemptions) cardRewards = saved.rogersPointsRedemptions;
     if (saved.creditCards && Array.isArray(saved.creditCards)) creditCards = saved.creditCards;
     if (saved.ccActualSpend)   ccActualSpend  = saved.ccActualSpend;
+    bankTransfers = Array.isArray(saved.bankTransfers) ? saved.bankTransfers : [];
+    ccPayments = saved.ccPayments || {};
     if (saved.bankAccountsData && Array.isArray(saved.bankAccountsData)) {
       bankAccounts.length = 0;
       saved.bankAccountsData.forEach((a, i) => {
@@ -7199,11 +7302,11 @@ function renderBankSummary() {
     const icon = a.logo
       ? '<img src="' + a.logo + '" style="width:30px;height:30px;border-radius:6px;object-fit:contain;background:#fff">'
       : (presetKey ? bankBadgeHTML(presetKey, 30) : '<span style="width:30px;height:30px;display:inline-block"></span>');
-    const asOf = a.asOf ? 'as of ' + fmtAsOf(a.asOf) : '';
+    const asOf = a.type !== 'savings' && a.asOf ? 'live \u00b7 confirmed ' + fmtAsOf(a.asOf).replace(/, \d{4}$/, '') : (a.asOf ? 'as of ' + fmtAsOf(a.asOf) : '');
     return '<div class="stat-card" style="padding:14px 12px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px">' +
       icon +
       '<div style="font-size:0.78em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escapeHtml(a.name) + '</div>' +
-      '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:var(--income-green)">' + fmt(a.balance || 0) + '</div>' +
+      '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:' + ((a.balance || 0) < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + fmtCents(a.balance || 0) + '</div>' +
       (asOf ? '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--muted)">' + asOf + '</div>' : '') +
     '</div>';
   };
@@ -7283,6 +7386,7 @@ function computeNetWorth(yr, mo) {
 }
 
 function updateSummary() {
+  if (typeof acctModalOpen === 'function' && acctModalOpen()) setTimeout(renderAcctModal, 0);
   const totalIncome = totalActualMonthlyIncome(calYear, calMonth);
   if (typeof updateBusinessBadge === 'function') updateBusinessBadge();
   renderUpcomingBills();
@@ -7451,7 +7555,15 @@ function setSavingsBalanceForMonth(id, yr, mo, balance) {
 
 function getBankAccountsForMonth(yr, mo) {
   return bankAccounts.map(acc => {
-    if (acc.type !== 'savings') return acc;
+    if (acc.type !== 'savings') {
+      // Chequing: the confirmed balance rolled forward (or back) through its transactions
+      return acc.asOf ? { ...acc, confirmedBalance: acc.balance, balance: accountBalanceForMonth(acc, yr, mo) } : acc;
+    }
+    // Savings: live from the month its balance was confirmed; earlier months
+    // keep the monthly balances entered before tracking started.
+    if (savingsIsLive(acc, yr, mo)) {
+      return { ...acc, confirmedBalance: acc.balance, balance: accountBalanceForMonth(acc, yr, mo) };
+    }
     const snap = getSavingsBalanceForMonth(acc.id, yr, mo);
     return snap !== null ? { ...acc, balance: snap } : acc;
   });
@@ -7557,6 +7669,421 @@ function reconcileChequing(acct) {
   return { expected, projectedFlow, inflow, outflow, incCount, expCount };
 }
 
+// ══ ACCOUNT LEDGER ═════════════════════════════════════════════════════
+// Every deposit and payment that touches a bank account, built from Money In
+// (deposit account), Money Out (paid from), card payments and transfers.
+// Chequing balances update themselves: the last balance you confirmed, plus
+// everything dated after that confirmation up to the day being shown.
+
+function fmtCents(n) {
+  n = Number(n) || 0;
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Does a stored source/deposit key point at this account? ("acct:<id>" or a bank preset key)
+function keyMatchesAccount(acct, key) {
+  if (!key || !acct) return false;
+  const a = accountForSource(key);
+  if (a) return a.id === acct.id;
+  // A bank name (e.g. "cibc") rather than a specific account: it belongs to
+  // that bank's first chequing account, so two CIBC accounts never both count it.
+  const sameBank = bankAccounts.filter(b => getBankPresetKey(b) === key);
+  if (!sameBank.length) return false;
+  const owner = sameBank.find(b => b.type !== 'savings') || sameBank[0];
+  return owner.id === acct.id;
+}
+
+function _ymdToDate(s) {
+  if (!s) return null;
+  const p = String(s).split('-').map(Number);
+  if (p.length < 3 || p.some(isNaN)) return null;
+  return new Date(p[0], p[1] - 1, p[2]);
+}
+function _todayDate() { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate()); }
+
+// Label for a transfer end (bank account or investment)
+function transferEndLabel(key) {
+  if (!key) return '?';
+  if (String(key).indexOf('inv:') === 0) {
+    const inv = investments.find(i => String(i.id) === String(key).slice(4) || i.name === String(key).slice(4));
+    return inv ? inv.name : 'Investment';
+  }
+  const a = bankAccounts.find(x => x.id === key);
+  return a ? a.name : 'Account';
+}
+
+// Transfers occurring in a month: [{ t, day }]
+function transfersInMonth(yr, mo) {
+  const dim = new Date(yr, mo + 1, 0).getDate();
+  const mv = monthVal(yr, mo);
+  const out = [];
+  bankTransfers.forEach(t => {
+    const start = monthVal(t.yr, t.mo);
+    if (t.repeat) {
+      if (mv < start) return;
+      if (t.endYr !== undefined && mv > monthVal(t.endYr, t.endMo)) return;
+    } else if (mv !== start) return;
+    out.push({ t, day: Math.min(t.day || 1, dim) });
+  });
+  return out;
+}
+
+// Default payment date for a card statement: 21 days after it closes
+function cardPaymentDefaultDate(card, yr, mo) {
+  const end = cardPeriod(card, yr, mo).end;
+  const d = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 21);
+  return _localYMD(d);
+}
+function ccPaymentKey(cardId, yr, mo) { return cardId + '-' + yr + '-' + mo; }
+function getCardPayment(card, yr, mo) {
+  const rec = ccPayments[ccPaymentKey(card.id, yr, mo)];
+  if (!rec || !rec.acct) return null;
+  return { acct: rec.acct, date: rec.date || cardPaymentDefaultDate(card, yr, mo) };
+}
+
+// Card payments landing in a given month, from any account: [{ card, stmtYr, stmtMo, acct, date, amount }]
+function cardPaymentsInMonth(yr, mo) {
+  const out = [];
+  Object.keys(ccPayments).forEach(k => {
+    const t = _ucSplitTail(k, 2);
+    const card = creditCards.find(c => c.id === t.head);
+    if (!card) return;
+    const sy = +t.tail[0], sm = +t.tail[1];
+    const pay = getCardPayment(card, sy, sm);
+    if (!pay) return;
+    const d = _ymdToDate(pay.date);
+    if (!d || d.getFullYear() !== yr || d.getMonth() !== mo) return;
+    const amount = getCCActual(card.id, sy, sm);
+    if (amount === null || !amount) return;
+    out.push({ card, stmtYr: sy, stmtMo: sm, acct: pay.acct, date: d, day: d.getDate(), amount });
+  });
+  return out;
+}
+
+// All transactions for one account in one month, oldest first.
+// Each: { day, kind, name, amount (+ in / - out), ref }
+function accountTxForMonth(acct, yr, mo) {
+  const dim = new Date(yr, mo + 1, 0).getDate();
+  const ovr = monthOverrides[calMonthKey(yr, mo)] || {};
+  const tx = [];
+
+  // Deposits: Money In sent to this account
+  budget.income.forEach(item => {
+    if (!keyMatchesAccount(acct, item.destAccount)) return;
+    if (item.oneTime && (item.oneTimeYr !== yr || item.oneTimeMo !== mo)) return;
+    if (item.startYr !== undefined && (yr < item.startYr || (yr === item.startYr && mo < item.startMo))) return;
+    if (incomeEnded(item, yr, mo)) return;
+    const rate = getIncomeAmountForMonth(item.id, yr, mo);
+    const days = getIncomeDaysInMonth(item, yr, mo);
+    (days.length ? days : [dim]).forEach((d, idx) => {
+      const actual = getActualPay(yr, mo, item.id, idx);
+      const amt = actual !== null ? actual : rate;
+      if (!amt) return;
+      tx.push({ day: d, kind: 'deposit', name: item.name, amount: amt, ref: { type: 'income', id: item.id, idx } });
+    });
+  });
+
+  // Payments: Money Out paid from this account
+  budget.expenses.forEach(e => {
+    if (e.ccOtherCharges || e.ccCashBack) return;
+    if (!keyMatchesAccount(acct, getExpenseSourceForMonth(e.id, yr, mo))) return;
+    if (e.startYr !== undefined && (yr < e.startYr || (yr === e.startYr && mo < e.startMo))) return;
+    if (e.endYr !== undefined && (yr > e.endYr || (yr === e.endYr && mo > e.endMo))) return;
+    const amt = getExpenseAmountForMonth(e.id, yr, mo);
+    if (!amt) return;
+    let d = ovr[e.id] !== undefined ? ovr[e.id] : parseDueDays(getExpenseDueForMonth(e.id, yr, mo))[0];
+    if (!d) d = dim;
+    tx.push({ day: clampDay(d, dim), kind: amt < 0 ? 'refund' : 'payment', name: e.name, amount: -amt, ref: { type: 'expense', id: e.id } });
+  });
+
+  // Card payments made from this account
+  cardPaymentsInMonth(yr, mo).forEach(p => {
+    if (p.acct !== acct.id) return;
+    tx.push({ day: p.day, kind: 'card', name: p.card.name + ' payment', amount: -p.amount,
+      sub: MONTHS[p.stmtMo] + ' statement', ref: { type: 'card', id: p.card.id, yr: p.stmtYr, mo: p.stmtMo } });
+  });
+
+  // Transfers in and out
+  transfersInMonth(yr, mo).forEach(({ t, day }) => {
+    if (t.from === acct.id) tx.push({ day, kind: 'transfer', name: 'Transfer to ' + transferEndLabel(t.to), amount: -t.amount, sub: t.note || '', ref: { type: 'transfer', id: t.id } });
+    if (t.to === acct.id)   tx.push({ day, kind: 'transfer', name: 'Transfer from ' + transferEndLabel(t.from), amount: t.amount, sub: t.note || '', ref: { type: 'transfer', id: t.id } });
+  });
+
+  // Same day: money in before money out
+  tx.sort((a, b) => a.day - b.day || b.amount - a.amount);
+  return tx;
+}
+
+// Net of all transactions strictly after `from` and up to and including `to`
+function _acctNetBetween(acct, from, to) {
+  if (to <= from) return 0;
+  let net = 0;
+  for (let mv = monthVal(from.getFullYear(), from.getMonth()); mv <= monthVal(to.getFullYear(), to.getMonth()); mv++) {
+    const yr = Math.floor(mv / 12), mo = mv % 12;
+    accountTxForMonth(acct, yr, mo).forEach(x => {
+      const d = new Date(yr, mo, x.day);
+      if (d > from && d <= to) net += x.amount;
+    });
+  }
+  return net;
+}
+
+// Chequing balance at the end of a given day
+function accountBalanceAt(acct, date) {
+  const base = acct.balance || 0;
+  const anchor = _ymdToDate(acct.asOf);
+  if (!anchor) return base;
+  return date >= anchor ? base + _acctNetBetween(acct, anchor, date) : base - _acctNetBetween(acct, date, anchor);
+}
+
+// The balance shown for a month: today in the current month, else the month's last day
+// A savings account follows its transactions once a balance has been confirmed
+// (from that month on). Before that it uses the balance entered for each month.
+function savingsIsLive(acct, yr, mo) {
+  const d = _ymdToDate(acct.asOf);
+  if (!d) return false;
+  return monthVal(yr, mo) >= monthVal(d.getFullYear(), d.getMonth());
+}
+function accountIsLive(acct, yr, mo) {
+  return acct.type === 'savings' ? savingsIsLive(acct, yr, mo) : !!acct.asOf;
+}
+
+function accountBalanceForMonth(acct, yr, mo) {
+  const today = _todayDate();
+  const dim = new Date(yr, mo + 1, 0).getDate();
+  const day = (today.getFullYear() === yr && today.getMonth() === mo) ? today.getDate() : dim;
+  return accountBalanceAt(acct, new Date(yr, mo, day));
+}
+
+// ══ ACCOUNT PANEL ══════════════════════════════════════════════════════
+var _acctModalId = null;
+
+function openAcctModal(id) {
+  _acctModalId = id;
+  renderAcctModal();
+  document.getElementById('acct-modal').classList.add('open');
+}
+function closeAcctModal() {
+  _acctModalId = null;
+  document.getElementById('acct-modal').classList.remove('open');
+}
+function acctModalOpen() {
+  const m = document.getElementById('acct-modal');
+  return !!(m && m.classList.contains('open') && _acctModalId);
+}
+// The panel follows the app's month, so anything added lands in the month shown
+function acctFlipMonth(dir) {
+  const btn = document.getElementById(dir < 0 ? 'prev-month' : 'next-month');
+  if (btn) btn.click();
+  renderAcctModal();
+}
+
+function renderAcctModal() {
+  const acct = bankAccounts.find(a => a.id === _acctModalId);
+  if (!acct) { closeAcctModal(); return; }
+  const yr = calYear, mo = calMonth;
+  const isSav = acct.type === 'savings' && !savingsIsLive(acct, yr, mo);
+  const logoSrc = getBankLogo(acct), pk = getBankPresetKey(acct);
+  document.getElementById('acct-logo').innerHTML = logoSrc
+    ? '<img src="' + logoSrc + '" style="width:36px;height:36px;border-radius:8px;object-fit:contain;background:#fff">'
+    : (pk ? bankBadgeHTML(pk, 36) : '');
+  document.getElementById('acct-name').textContent = acct.name;
+  document.getElementById('acct-type').textContent = acct.type === 'savings' ? 'Savings' : 'Chequing';
+  document.getElementById('acct-month').textContent = MONTHS[mo] + ' ' + yr;
+
+  const tx = accountTxForMonth(acct, yr, mo);
+  const today = _todayDate();
+  const dim = new Date(yr, mo + 1, 0).getDate();
+  const isCur = today.getFullYear() === yr && today.getMonth() === mo;
+
+  // Balance box
+  let box = '';
+  if (isSav) {
+    const snap = getSavingsBalanceForMonth(acct.id, yr, mo);
+    const net = tx.reduce((t, x) => t + x.amount, 0);
+    box = '<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Balance &middot; ' + MONTHS[mo] + '</div>' +
+      '<div style="font-family:var(--font-serif);font-size:1.9em;letter-spacing:-.02em;margin-top:2px">' + fmtCents(snap !== null ? snap : (acct.balance || 0)) + '</div>' +
+      '<div style="font-family:var(--font-mono);font-size:0.75em;color:var(--muted);margin-top:4px">' +
+      (acct.asOf ? 'Entered for ' + MONTHS[mo] + ' (before tracking started on ' + fmtAsOf(acct.asOf) + ').'
+        : 'Confirm today\u2019s balance once and deposits, payments and transfers will update it from then on.') +
+      (tx.length ? ' Transactions this month: ' + (net >= 0 ? '+' : '-') + fmtCents(Math.abs(net)).replace('-', '') + '.' : '') + '</div>' +
+      (!acct.asOf ? '<div style="margin-top:10px;display:flex;gap:8px"><input type="number" step="0.01" id="acct-confirm-input" class="tf-sel" style="flex:1" value="' + (snap !== null ? snap : (acct.balance || 0)) + '"><button class="btn-primary" onclick="acctConfirmBalance()">Start tracking</button></div>' : '');
+  } else {
+    const showDay = isCur ? today.getDate() : dim;
+    const bal = accountBalanceAt(acct, new Date(yr, mo, showDay));
+    const label = isCur ? 'Balance today' : (new Date(yr, mo, dim) < today ? 'Balance at end of ' + MONTHS[mo] : 'Projected end of ' + MONTHS[mo]);
+    const conf = acct.asOf ? 'Confirmed ' + fmtCents(acct.balance || 0) + ' on ' + fmtAsOf(acct.asOf) : 'Not confirmed yet';
+    box = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+      '<div><div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">' + label + '</div>' +
+      '<div style="font-family:var(--font-serif);font-size:1.9em;letter-spacing:-.02em;margin-top:2px;color:' + (bal < 0 ? 'var(--expense-red)' : 'var(--text)') + '">' + fmtCents(bal) + '</div>' +
+      '<div style="font-family:var(--font-mono);font-size:0.75em;color:var(--muted);margin-top:4px">' + conf + '</div></div>' +
+      '<button class="btn-secondary" style="white-space:nowrap" onclick="acctShowConfirm()">Update balance</button></div>' +
+      '<div id="acct-confirm-row" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">' +
+        '<div style="font-size:0.8em;color:var(--muted);margin-bottom:6px">What does your bank show right now? Everything after today keeps adjusting from this.</div>' +
+        '<div style="display:flex;gap:8px"><input type="number" step="0.01" id="acct-confirm-input" class="tf-sel" style="flex:1" value="' + (Math.round(accountBalanceAt(acct, today) * 100) / 100) + '">' +
+        '<button class="btn-primary" onclick="acctConfirmBalance()">Save</button></div></div>';
+  }
+  document.getElementById('acct-balance-box').innerHTML = box;
+
+  // Transactions
+  if (!tx.length) {
+    document.getElementById('acct-tx').innerHTML = '<div style="padding:22px;text-align:center;color:var(--muted);font-size:0.875em">No deposits or payments linked to this account in ' + MONTHS[mo] + '.<br><span style="font-size:0.9em">Pick this account as the deposit account or "paid from" source on Money In / Money Out items, or add one below.</span></div>';
+    return;
+  }
+  let running = isSav ? null : accountBalanceAt(acct, new Date(yr, mo, 0));   // end of previous month
+  const totIn = tx.filter(x => x.amount > 0).reduce((t, x) => t + x.amount, 0);
+  const totOut = tx.filter(x => x.amount < 0).reduce((t, x) => t + x.amount, 0);
+  let html = '<div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:0.75em">' +
+    '<span style="color:var(--income-green)">In ' + fmtCents(totIn) + '</span><span style="color:var(--expense-red)">Out ' + fmtCents(Math.abs(totOut)) + '</span>' +
+    (running !== null ? '<span style="color:var(--muted)">Start ' + fmtCents(running) + '</span>' : '') + '</div>';
+  tx.forEach((x, i) => {
+    if (running !== null) running += x.amount;
+    const upcoming = new Date(yr, mo, x.day) > today;
+    const tag = x.kind === 'card' ? '<span style="color:var(--accent2)">Card payment</span>'
+      : x.kind === 'transfer' ? '<span style="color:var(--accent2)">Transfer</span>'
+      : x.kind === 'refund' ? '<span style="color:var(--income-green)">Refund</span>'
+      : x.kind === 'deposit' ? 'Deposit' : 'Payment';
+    const amtColor = x.amount >= 0 ? 'var(--income-green)' : 'var(--text)';
+    html += '<div class="acct-tx-row' + (upcoming ? ' upcoming' : '') + '" onclick="acctOpenTx(' + i + ')">' +
+      '<div class="acct-tx-date">' + MONTHS[mo] + '<b>' + x.day + '</b></div>' +
+      '<div style="min-width:0"><div class="acct-tx-name">' + escHtml(x.name) + '</div>' +
+        '<div class="acct-tx-sub">' + [tag, x.sub ? escHtml(x.sub) : '', upcoming ? 'upcoming' : ''].filter(Boolean).join(' &middot; ') + '</div></div>' +
+      '<div><div class="acct-tx-amt" style="color:' + amtColor + '">' + (x.amount >= 0 ? '+' : '-') + fmtCents(Math.abs(x.amount)) + '</div>' +
+        (running !== null ? '<div class="acct-tx-run">' + fmtCents(running) + '</div>' : '') + '</div>' +
+      '</div>';
+  });
+  document.getElementById('acct-tx').innerHTML = html;
+}
+
+function acctShowConfirm() {
+  const r = document.getElementById('acct-confirm-row');
+  if (r) { r.style.display = ''; const i = document.getElementById('acct-confirm-input'); if (i) { i.focus(); i.select(); } }
+}
+function acctConfirmBalance() {
+  const acct = bankAccounts.find(a => a.id === _acctModalId);
+  const v = parseFloat(document.getElementById('acct-confirm-input').value);
+  if (!acct || isNaN(v)) return;
+  pushUndo();
+  acct.balance = Math.round(v * 100) / 100;
+  acct.asOf = _localYMD(new Date());
+  if (acct.type === 'savings') {
+    const n = new Date();
+    setSavingsBalanceForMonth(acct.id, n.getFullYear(), n.getMonth(), acct.balance);   // keep the monthly history too
+  }
+  renderBankAccounts(); updateSummary(); renderCalendar();
+  renderAcctModal();
+}
+
+// Tap a transaction: open whatever it came from
+function acctOpenTx(i) {
+  const acct = bankAccounts.find(a => a.id === _acctModalId);
+  if (!acct) return;
+  const x = accountTxForMonth(acct, calYear, calMonth)[i];
+  if (!x) return;
+  const r = x.ref;
+  if (r.type === 'income') {
+    const item = budget.income.find(it => it.id === r.id);
+    if (item && !item.oneTime) openEditPay(calYear, calMonth, r.id, r.idx, x.amount);
+    else editIncome(r.id);
+  } else if (r.type === 'expense') editExpense(r.id);
+  else if (r.type === 'transfer') openTransferModal(r.id);
+  else if (r.type === 'card') { closeAcctModal(); navTo('creditcards'); if (!ccOpenSet().has(r.id)) setTimeout(() => ccToggleCard(r.id), 50); }
+}
+
+function _acctDefaultDay() {
+  const t = new Date();
+  return (t.getFullYear() === calYear && t.getMonth() === calMonth) ? t.getDate() : 1;
+}
+// + Deposit: a one-time Money In item landing in this account
+function acctAddDeposit() {
+  const acct = bankAccounts.find(a => a.id === _acctModalId);
+  if (!acct) return;
+  openIncomeModal();
+  document.getElementById('modal-freq').value = 'onetime';
+  toggleIncomeScheduleFields();
+  document.getElementById('modal-payday').value = _acctDefaultDay();
+  populateIncomeDest(accountSourceKey(acct));
+}
+// + Payment: a Money Out item paid from this account
+function acctAddPayment() {
+  const acct = bankAccounts.find(a => a.id === _acctModalId);
+  if (!acct) return;
+  addExpense();
+  setSelectedSource(accountSourceKey(acct));
+  document.getElementById('exp-modal-due').value = _acctDefaultDay();
+}
+
+// ── Transfers ──
+var _transferEditId = null;
+function _transferOptions(includeInvest) {
+  let h = '';
+  bankAccounts.forEach(a => { h += '<option value="' + a.id + '">' + escHtml(a.name) + (a.type === 'savings' ? ' (savings)' : '') + '</option>'; });
+  if (includeInvest && investments.length) {
+    h += '<optgroup label="Investments">';
+    investments.forEach(inv => { h += '<option value="inv:' + escHtml(String(inv.id != null ? inv.id : inv.name)) + '">' + escHtml(inv.name) + '</option>'; });
+    h += '</optgroup>';
+  }
+  return h;
+}
+function openTransferModal(id) {
+  _transferEditId = id;
+  const t = id ? bankTransfers.find(x => x.id === id) : null;
+  document.getElementById('transfer-from').innerHTML = _transferOptions(false);
+  document.getElementById('transfer-to').innerHTML = _transferOptions(true);
+  document.getElementById('transfer-title').textContent = t ? 'Edit transfer' : 'Transfer';
+  const other = bankAccounts.find(a => a.id !== _acctModalId);
+  document.getElementById('transfer-from').value = t ? t.from : (_acctModalId || (bankAccounts[0] && bankAccounts[0].id) || '');
+  document.getElementById('transfer-to').value = t ? t.to : (other ? other.id : '');
+  document.getElementById('transfer-amount').value = t ? t.amount : '';
+  document.getElementById('transfer-date').value = t ? _localYMD(new Date(t.yr, t.mo, t.day)) : _localYMD(new Date(calYear, calMonth, _acctDefaultDay()));
+  document.getElementById('transfer-note').value = t ? (t.note || '') : '';
+  document.getElementById('transfer-repeat').checked = t ? !!t.repeat : false;
+  document.getElementById('transfer-delete-btn').style.display = t ? '' : 'none';
+  document.getElementById('transfer-stop-btn').style.display = (t && t.repeat) ? '' : 'none';
+  document.getElementById('transfer-modal').classList.add('open');
+}
+function closeTransferModal() { document.getElementById('transfer-modal').classList.remove('open'); _transferEditId = null; }
+function _afterTransferChange() {
+  closeTransferModal();
+  renderBankAccounts(); renderCalendar(); updateSummary();
+  if (acctModalOpen()) renderAcctModal();
+}
+function saveTransfer() {
+  const from = document.getElementById('transfer-from').value;
+  const to = document.getElementById('transfer-to').value;
+  const amount = Math.round((parseFloat(document.getElementById('transfer-amount').value) || 0) * 100) / 100;
+  const d = _ymdToDate(document.getElementById('transfer-date').value);
+  if (!from || !to || from === to) { alert('Choose two different accounts.'); return; }
+  if (!(amount > 0)) { document.getElementById('transfer-amount').focus(); return; }
+  if (!d) { document.getElementById('transfer-date').focus(); return; }
+  pushUndo();
+  const rec = { from, to, amount, yr: d.getFullYear(), mo: d.getMonth(), day: d.getDate(),
+    repeat: document.getElementById('transfer-repeat').checked, note: document.getElementById('transfer-note').value.trim() };
+  const t = _transferEditId ? bankTransfers.find(x => x.id === _transferEditId) : null;
+  if (t) { const keepEnd = rec.repeat && t.endYr !== undefined ? { endYr: t.endYr, endMo: t.endMo } : {}; Object.keys(t).forEach(k => { if (k !== 'id') delete t[k]; }); Object.assign(t, rec, keepEnd); }
+  else bankTransfers.push(Object.assign({ id: 'xfer_' + Date.now() }, rec));
+  _afterTransferChange();
+}
+function deleteTransfer() {
+  const t = bankTransfers.find(x => x.id === _transferEditId);
+  if (!t) return;
+  if (!confirm(t.repeat ? 'Delete this repeating transfer from every month?' : 'Delete this transfer?')) return;
+  pushUndo();
+  bankTransfers = bankTransfers.filter(x => x.id !== t.id);
+  _afterTransferChange();
+}
+// Repeating transfer: stop it after the month before the one being viewed
+function stopTransfer() {
+  const t = bankTransfers.find(x => x.id === _transferEditId);
+  if (!t) return;
+  const endMv = monthVal(calYear, calMonth) - 1;
+  if (endMv < monthVal(t.yr, t.mo)) { deleteTransfer(); return; }
+  if (!confirm('Stop this transfer from ' + MONTHS[calMonth] + ' ' + calYear + ' on? Earlier months keep it.')) return;
+  pushUndo();
+  t.endYr = Math.floor(endMv / 12); t.endMo = endMv % 12;
+  _afterTransferChange();
+}
+
 function renderBankAccounts() {
   const body = document.getElementById('bank-body');
   if (!body) return;
@@ -7564,7 +8091,7 @@ function renderBankAccounts() {
   const monthData = getBankAccountsForMonth(yr, mo);
   const total = monthData.reduce((s, a) => s + a.balance, 0);
   const totalEl = document.getElementById('bank-total');
-  if (totalEl) totalEl.textContent = fmt(total);
+  if (totalEl) totalEl.textContent = fmtCents(total);
 
   const prevMo = mo === 0 ? 11 : mo - 1;
   const prevYr = mo === 0 ? yr - 1 : yr;
@@ -7582,7 +8109,7 @@ function renderBankAccounts() {
           : `<span style="width:20px;height:20px;border-radius:4px;background:var(--surface2);flex-shrink:0;display:inline-block"></span>`);
 
     let subLine;
-    if (isSavings) {
+    if (isSavings && !savingsIsLive(a, yr, mo)) {
       const prevSnap = getSavingsBalanceForMonth(a.id, prevYr, prevMo);
       if (prevSnap !== null) {
         const diff = a.balance - prevSnap;
@@ -7596,24 +8123,25 @@ function renderBankAccounts() {
       } else {
         subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px;font-style:italic">no prior month to compare</div>`;
       }
-    } else {
-      subLine = asOfLabel
-        ? `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px">as of ${asOfLabel}</div>`
-        : `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px;font-style:italic">balance not yet updated</div>`;
-      // Reconciliation: projected balance based on flows since the as-of date
-      const rec = reconcileChequing(a);
-      if (rec) {
-        if ((rec.incCount + rec.expCount) > 0) {
-          const flowSign = rec.projectedFlow >= 0 ? '+' : '-';
-          subLine += `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--accent2);margin-top:3px" title="Since ${asOfLabel}: ${rec.incCount} deposit(s) totalling ${fmt(rec.inflow)}, ${rec.expCount} payment(s) totalling ${fmt(rec.outflow)}">projected now: ${fmt(rec.expected)} (${flowSign}${fmt(Math.abs(rec.projectedFlow))} since update)</div>`;
-        } else {
-          subLine += `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:3px">✓ up to date · no activity since ${asOfLabel}</div>`;
-        }
+      if (a.asOf === undefined || a.asOf === '') {
+        subLine += `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--accent2);margin-top:3px">tap to start tracking deposits ›</div>`;
       }
+    } else {
+      if (asOfLabel) {
+        const moved = a.balance - (a.confirmedBalance !== undefined ? a.confirmedBalance : a.balance);
+        const movedTxt = Math.abs(moved) >= 0.005
+          ? ` · <span style="color:${moved >= 0 ? 'var(--income-green)' : 'var(--expense-red)'}">${moved >= 0 ? '+' : '-'}${fmtCents(Math.abs(moved)).slice(moved >= 0 ? 0 : 1)} since</span>`
+          : '';
+        subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px">confirmed ${fmtCents(a.confirmedBalance !== undefined ? a.confirmedBalance : a.balance)} on ${asOfLabel}${movedTxt}</div>`;
+      } else {
+        subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px;font-style:italic">balance not yet confirmed</div>`;
+      }
+      const nTx = accountTxForMonth(a, yr, mo).length;
+      subLine += `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--accent2);margin-top:3px">${nTx} transaction${nTx === 1 ? '' : 's'} in ${MONTHS[mo]} ›</div>`;
     }
 
     return `
-    <div class="bank-item">
+    <div class="bank-item" style="cursor:pointer" onclick="openAcctModal('${a.id}')">
       <div style="flex:1">
         <div style="display:flex;align-items:center;gap:6px;font-size:0.9286em;font-weight:500">
           ${logoHtml}${escHtml(a.name)}
@@ -7621,9 +8149,9 @@ function renderBankAccounts() {
         ${subLine}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <div class="bank-value">${fmt(a.balance)}</div>
+        <div class="bank-value">${fmtCents(a.balance)}</div>
         <div class="item-actions" style="opacity:1">
-          <button class="icon-btn" onclick="editBankAccount('${a.id}')" title="Edit">
+          <button class="icon-btn" onclick="event.stopPropagation();editBankAccount('${a.id}')" title="Edit">
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg>
           </button>
         </div>
@@ -7734,9 +8262,12 @@ function editBankAccount(id) {
   const acc = bankAccounts.find(a => a.id === id);
   if (!acc) return;
   // For savings: show the effective balance for the currently-viewed month
-  const effectiveBalance = acc.type === 'savings'
-    ? (getSavingsBalanceForMonth(acc.id, calYear, calMonth) ?? acc.balance)
-    : acc.balance;
+  // Chequing: start from today's live balance so confirming is just a check
+  const nowD = new Date();
+  const liveNow = monthVal(calYear, calMonth) >= monthVal(nowD.getFullYear(), nowD.getMonth()) && accountIsLive(acc, calYear, calMonth);
+  const effectiveBalance = liveNow
+    ? Math.round(accountBalanceAt(acc, _todayDate()) * 100) / 100
+    : (acc.type === 'savings' ? (getSavingsBalanceForMonth(acc.id, calYear, calMonth) ?? acc.balance) : acc.balance);
   document.getElementById('bank-modal-title').textContent = 'Edit Account'
     + (acc.type === 'savings' ? ' — ' + MONTHS[calMonth] + ' ' + calYear : '');
   document.getElementById('bank-modal-name').value = acc.name;
@@ -7764,7 +8295,7 @@ function saveBankModal() {
   const name    = document.getElementById('bank-modal-name').value.trim();
   const balance = parseFloat(document.getElementById('bank-modal-balance').value);
   const type    = document.getElementById('bank-modal-type').value || 'chequing';
-  const asOf    = type === 'chequing' ? new Date().toISOString().split('T')[0] : '';
+  const asOf    = type === 'chequing' ? _localYMD(new Date()) : '';
   if (!name) { document.getElementById('bank-modal-name').focus(); return; }
   const safeBalance = isNaN(balance) ? 0 : balance;
   pushUndo();
@@ -7781,13 +8312,16 @@ function saveBankModal() {
     if (!acc) return;
     acc.name = name;
     acc.type = type;
-    acc.asOf = asOf;
+    if (type !== 'savings') acc.asOf = asOf;
     if (presetKey) acc.presetKey = presetKey; else delete acc.presetKey;
     if (logo) acc.logo = logo;
     if (type === 'savings') {
-      // Write balance ONLY into this month — keyed by stable account id
       setSavingsBalanceForMonth(acc.id, calYear, calMonth, safeBalance);
-      acc.balance = 0; // base is always 0; per-month snapshots hold truth
+      const now = new Date();
+      if (monthVal(calYear, calMonth) >= monthVal(now.getFullYear(), now.getMonth())) {
+        acc.balance = safeBalance;            // confirmed today: deposits/transfers from here on update it
+        acc.asOf = _localYMD(now);
+      }
     } else {
       acc.balance = safeBalance;
     }
@@ -7796,8 +8330,8 @@ function saveBankModal() {
     const id = 'bank_' + Date.now();
     const baseObj = {
       id, name, type,
-      asOf: type === 'savings' ? '' : asOf,
-      balance: type === 'savings' ? 0 : safeBalance,
+      asOf: _localYMD(new Date()),
+      balance: safeBalance,
       ...(presetKey ? { presetKey } : {}),
       ...(logo ? { logo } : {})
     };
@@ -7871,6 +8405,8 @@ function captureState() {
     rogersPoints:    cardRewards,
     ccActualSpend:   ccActualSpend,
     creditCards:     creditCards,
+    bankTransfers:   bankTransfers,
+    ccPayments:      ccPayments,
     bankAccounts:    bankAccounts,
     monthlyBankAccounts: monthlyBankAccounts,
     mortgageData:    JSON.parse(JSON.stringify(mortgageData)),
@@ -7920,6 +8456,9 @@ function performUndo() {
   if (snap.bankAccounts) {
     bankAccounts.splice(0, bankAccounts.length, ...snap.bankAccounts);
   }
+  if (snap.creditCards) creditCards = snap.creditCards;
+  if (snap.bankTransfers) bankTransfers = snap.bankTransfers;
+  if (snap.ccPayments) ccPayments = snap.ccPayments;
   if (snap.monthlyBankAccounts) {
     Object.keys(monthlyBankAccounts).forEach(k => delete monthlyBankAccounts[k]);
     Object.assign(monthlyBankAccounts, snap.monthlyBankAccounts);
@@ -8227,7 +8766,7 @@ document.addEventListener('keydown', e => {
     }
   }
   if (e.key === 'Escape') {
-    ['income-modal','expense-modal','debt-modal','invest-modal','cat-modal','pay-edit-overlay','add-card-modal','bank-modal','invest-trend-modal'].forEach(id => {
+    ['income-modal','expense-modal','debt-modal','invest-modal','cat-modal','pay-edit-overlay','add-card-modal','bank-modal','invest-trend-modal','transfer-modal'].forEach(id => {
       document.getElementById(id).classList.remove('open');
     });
     window._calReturnDay = null;
@@ -9675,6 +10214,24 @@ function buildPaymentMap(yr, mo) {
   return map;
 }
 
+// Money moving between your own accounts/cards on each day of a month. Shown on
+// the calendar but never counted as spending (the bills behind a card payment
+// are already in Money Out).
+function buildMovementMap(yr, mo) {
+  const map = {};
+  const add = (d, x) => { (map[d] = map[d] || []).push(x); };
+  cardPaymentsInMonth(yr, mo).forEach(p => {
+    const a = bankAccounts.find(b => b.id === p.acct);
+    add(p.day, { kind: 'card', name: p.card.name + ' payment', amount: p.amount,
+      detail: (a ? 'from ' + a.name + ' · ' : '') + MONTHS[p.stmtMo] + ' statement', ref: { id: p.card.id } });
+  });
+  transfersInMonth(yr, mo).forEach(({ t, day }) => {
+    add(day, { kind: 'transfer', name: 'Transfer', amount: t.amount,
+      detail: transferEndLabel(t.from) + ' → ' + transferEndLabel(t.to) + (t.note ? ' · ' + t.note : ''), ref: { id: t.id } });
+  });
+  return map;
+}
+
 // Build source-grouped tooltip HTML for a list of items
 function buildTipHTML(items) {
   // Income items: show each by name in green, no source grouping
@@ -9760,6 +10317,20 @@ function buildDayDetailHTML(yr, mo, day, showBack) {
     });
     if (expOnly.length > 0) out += '<div class="cal-day-total-strip"><div class="cal-day-total-label">Total due</div><div class="cal-day-total-val">'+fmtMoney(total)+'</div></div>';
   }
+  const moves = buildMovementMap(yr, mo)[day] || [];
+  if (moves.length) {
+    out += '<div style="margin-top:16px;font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Between your accounts \u00b7 not counted as spending</div>';
+    moves.forEach(x => {
+      const click = x.kind === 'card'
+        ? "navTo('creditcards');if(!ccOpenSet().has('"+x.ref.id+"'))setTimeout(function(){ccToggleCard('"+x.ref.id+"')},50)"
+        : "openTransferModal('"+x.ref.id+"')";
+      out += '<div class="cal-day-row" style="cursor:pointer" onclick="'+click+'">'
+        + '<div style="width:8px;height:8px;border-radius:50%;background:var(--accent2);flex-shrink:0"></div>'
+        + '<div style="width:24px;text-align:center;color:var(--accent2)">\u21c4</div>'
+        + '<div style="flex:1"><div class="cal-day-name">'+escHtml(x.name)+'</div><div style="font-size:0.7143em;color:var(--muted);font-family:var(--font-mono)">'+escHtml(x.detail)+'</div></div>'
+        + '<div class="cal-day-amt" style="color:var(--accent2)">'+fmtCents(x.amount)+'</div></div>';
+    });
+  }
   out += '<div style="display:flex;gap:8px;margin-top:14px;">'
     + '<button onclick="calAddExpense('+yr+','+mo+','+day+')" style="flex:1;background:rgba(255,91,122,.13);border:1px solid rgba(255,91,122,.3);color:var(--expense-red);border-radius:8px;padding:8px 10px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">+ Add Expense</button>'
     + '<button onclick="calAddIncome('+yr+','+mo+','+day+')" style="flex:1;background:rgba(62,255,163,.10);border:1px solid rgba(62,255,163,.25);color:var(--income-green);border-radius:8px;padding:8px 10px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">+ Add Income</button>'
@@ -9819,11 +10390,11 @@ function buildCalBankBalanceFooter() {
     const icon = a.logo
       ? '<img src="' + a.logo + '" style="width:30px;height:30px;border-radius:6px;object-fit:contain;background:#fff">'
       : (presetKey ? bankBadgeHTML(presetKey, 30) : '<span style="width:30px;height:30px;display:inline-block"></span>');
-    const asOf = a.asOf ? 'as of ' + fmtAsOf(a.asOf) : 'not updated';
+    const asOf = a.asOf ? 'live \u00b7 confirmed ' + fmtAsOf(a.asOf).replace(/, \d{4}$/, '') : 'not confirmed';
     return '<div class="stat-card" style="padding:14px 12px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px">' +
       icon +
       '<div style="font-size:0.78em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escHtml(a.name) + '</div>' +
-      '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:var(--income-green)">' + fmt(a.balance || 0) + '</div>' +
+      '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:' + ((a.balance || 0) < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + fmtCents(a.balance || 0) + '</div>' +
       '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--muted)">' + asOf + '</div>' +
     '</div>';
   };
@@ -9874,6 +10445,7 @@ function renderMonthView(body) {
   const today = new Date();
   const isCurMo = today.getFullYear()===calYear && today.getMonth()===calMonth;
   const payMap = buildPaymentMap(calYear, calMonth);
+  const moveMap = buildMovementMap(calYear, calMonth);
   const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
   let out = '<div class="cal-grid">';
@@ -9908,6 +10480,7 @@ function renderMonthView(body) {
       + '<div class="cal-day">'+d+'</div>'
       + (hasExpense ? '<div class="cal-entry-expense" style="'+(expenseTotal<0?'color:var(--income-green)':'')+'">'+fmtMoney(expenseTotal)+'</div>' : '')
       + (hasIncome ? '<div class="cal-entry-income">'+fmtMoney(incomeTotal)+'</div>' : '')
+      + (moveMap[d] ? '<div class="cal-entry-move" title="Card payment / transfer between your accounts">\u21c4 '+fmtMoney(moveMap[d].reduce((t,x)=>t+x.amount,0))+'</div>' : '')
       + (hasOverride ? '<div class="cal-override-badge">edited</div>' : '')
       + (hasManual ? '<div class="cal-manual-dot" title="Manual payment required"></div>' : '')
       + '</div>';
@@ -10822,6 +11395,12 @@ function setCCActual(cardId, yr, mo, val) {
   } else {
     ccActualSpend[k] = n;
   }
+  const _pc = creditCards.find(c => c.id === cardId);
+  if (_pc) {
+    _ensureCardPayment(_pc, yr, mo);
+    const pr = document.getElementById('cc-pay-row-' + cardId);
+    if (pr) pr.innerHTML = cardPayRowHtml(_pc, yr, mo);
+  }
   // Sync auto-add other charges expense if enabled
   const card = creditCards.find(c => c.id === cardId);
   if (card && card.otherChargesAutoAdd) {
@@ -10832,6 +11411,53 @@ function setCCActual(cardId, yr, mo, val) {
   // Update tiles in-place (preserves input focus). Every card refreshes, because
   // spending on one card changes the budget left for the others.
   refreshAllCardMetrics();
+}
+
+// "Paid from <account> on <date>" under the statement total. The payment then
+// shows as one transaction in that account (bills + other charges, as one).
+function cardPayRowHtml(card, yr, mo) {
+  if (getCCActual(card.id, yr, mo) === null) return '';
+  if (!bankAccounts.length) return '<div style="margin-top:10px;font-size:0.75em;color:var(--muted);font-family:var(--font-mono)">Add a bank account to track which account pays this card.</div>';
+  const pay = getCardPayment(card, yr, mo);
+  const sel = pay ? pay.acct : '';
+  let opts = '<option value="">Not tracked</option>';
+  bankAccounts.forEach(a => { opts += '<option value="' + a.id + '"' + (a.id === sel ? ' selected' : '') + '>' + escHtml(a.name) + '</option>'; });
+  const date = pay ? pay.date : cardPaymentDefaultDate(card, yr, mo);
+  const st = 'background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:0.8em;padding:5px 8px';
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:0.8em;color:var(--muted)">' +
+    '<span>Paid from</span>' +
+    '<select style="' + st + '" onchange="setCardPayment(\'' + card.id + '\',' + yr + ',' + mo + ',this.value,null)">' + opts + '</select>' +
+    '<span>on</span>' +
+    '<input type="date" value="' + date + '" style="' + st + '"' + (sel ? '' : ' disabled') +
+      ' onchange="setCardPayment(\'' + card.id + '\',' + yr + ',' + mo + ',null,this.value)">' +
+    '</div>';
+}
+
+function setCardPayment(cardId, yr, mo, acctId, date) {
+  const card = creditCards.find(c => c.id === cardId);
+  if (!card) return;
+  pushUndo();
+  const k = ccPaymentKey(cardId, yr, mo);
+  const cur = ccPayments[k] || {};
+  if (acctId !== null) {
+    if (!acctId) { delete ccPayments[k]; card.payFrom = ''; }
+    else { ccPayments[k] = { acct: acctId, date: cur.date || cardPaymentDefaultDate(card, yr, mo) }; card.payFrom = acctId; }
+  }
+  if (date && ccPayments[k]) ccPayments[k].date = date;
+  const row = document.getElementById('cc-pay-row-' + cardId);
+  if (row) row.innerHTML = cardPayRowHtml(card, yr, mo);
+  renderBankAccounts(); renderCalendar(); updateSummary();
+}
+
+// When a statement total is first entered, pay it from the card's usual account
+function _ensureCardPayment(card, yr, mo) {
+  const k = ccPaymentKey(card.id, yr, mo);
+  if (getCCActual(card.id, yr, mo) === null) return;
+  if (ccPayments[k]) return;
+  if (card.payFrom === '') return;            // user chose "Not tracked" before
+  const acct = (card.payFrom && bankAccounts.find(a => a.id === card.payFrom)) || bankAccounts.find(a => a.type !== 'savings');
+  if (!acct) return;
+  ccPayments[k] = { acct: acct.id, date: cardPaymentDefaultDate(card, yr, mo) };
 }
 
 function updateActualSpendRow(cardId) {
@@ -12396,6 +13022,7 @@ function renderCreditCardsPage() {
               ' title="Clear">✕</button>' +
           '</div>' +
         '</div>' +
+        '<div id="cc-pay-row-' + card.id + '">' + cardPayRowHtml(card, yr, mo) + '</div>' +
       '</div>';
 
     html += `
