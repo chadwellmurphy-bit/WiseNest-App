@@ -8176,6 +8176,8 @@ function saveIncomeModal() {
         // Keep one-time items stored as monthly internally; update the actual pay
         // stamp for their month rather than the recurring base amount.
         setActualPay(item.oneTimeYr, item.oneTimeMo, item.id, 0, amount);
+        // The payment day can be corrected too (it was previously ignored on edit)
+        if (payDay) item.payDay = Math.min(31, Math.max(1, payDay));
       } else {
         item.freq = freq; item.anchorDate = anchorDate; item.payDay = payDay; item.payDay2 = payDay2;
         incomeAmounts[modalEditId] = amount;
