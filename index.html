@@ -919,6 +919,10 @@
   }
   .bank-item:last-child { border-bottom: none; }
   .cal-entry-move { font-family:var(--font-mono); font-size:0.62em; color:var(--accent2); line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .acct-modal-box { display:flex; flex-direction:column; overflow:hidden; max-height:calc(100dvh - 32px); }
+  .acct-modal-box > * { flex-shrink:0; }
+  .acct-up-btn { width:100%; background:var(--surface2); border:none; border-top:1px solid var(--border); color:var(--accent2); font-family:var(--font-sans); font-size:0.85em; padding:10px; cursor:pointer; }
+  .acct-up-btn:hover { background:var(--surface); }
   .tf-sel { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-sans); font-size:1em; padding:10px 12px; box-sizing:border-box; -webkit-appearance:none; }
   .acct-tx-row { display:grid; grid-template-columns: 44px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
   .acct-tx-row:last-child { border-bottom:none; }
@@ -3169,7 +3173,7 @@
 
 <!-- INCOME MODAL -->
 <div class="modal-overlay" id="acct-modal" onclick="if(event.target===this)closeAcctModal()">
-  <div class="modal" style="width:600px;max-width:100%">
+  <div class="modal acct-modal-box" style="width:600px;max-width:100%">
     <div style="display:flex;align-items:center;gap:12px">
       <div id="acct-logo"></div>
       <div style="flex:1;min-width:0">
@@ -3185,12 +3189,23 @@
       <div id="acct-month" style="font-family:var(--font-mono);font-size:0.8571em;text-align:center"></div>
       <button class="icon-btn" style="opacity:1;width:30px;height:30px" onclick="acctFlipMonth(1)" aria-label="Next month">&rsaquo;</button>
     </div>
-    <div id="acct-tx" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:10px"></div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px">
+    <div id="acct-tx" style="flex:1 1 auto;min-height:80px;overflow:auto;border:1px solid var(--border);border-radius:10px"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px;flex-shrink:0">
       <button onclick="acctAddDeposit()" style="background:rgba(62,255,163,.10);border:1px solid rgba(62,255,163,.25);color:var(--income-green);border-radius:8px;padding:9px 6px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">+ Deposit</button>
       <button onclick="acctAddPayment()" style="background:rgba(255,91,122,.13);border:1px solid rgba(255,91,122,.3);color:var(--expense-red);border-radius:8px;padding:9px 6px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">+ Payment</button>
       <button onclick="openTransferModal(null)" style="background:var(--surface2);border:1px solid var(--border);color:var(--accent2);border-radius:8px;padding:9px 6px;font-size:0.8571em;cursor:pointer;font-family:var(--font-sans)">&#8644; Transfer</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="acct-up-modal" onclick="if(event.target===this)closeAcctUpcoming()">
+  <div class="modal acct-modal-box" style="width:560px;max-width:100%">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div><h2 id="acct-up-title" style="margin:0;font-size:1.2em">Upcoming</h2>
+        <div id="acct-up-sub" style="font-family:var(--font-mono);font-size:0.75em;color:var(--muted);margin-top:3px"></div></div>
+      <button onclick="closeAcctUpcoming()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.5em;line-height:1;padding:0 2px">&times;</button>
+    </div>
+    <div id="acct-up-list" style="flex:1 1 auto;min-height:80px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:14px"></div>
   </div>
 </div>
 
@@ -3239,6 +3254,10 @@
     <div class="form-field" id="modal-anchor-wrap" style="display: none;">
       <label>Known Pay Date <span style="color:var(--muted);font-size:0.7857em">(any past or upcoming payday)</span></label>
       <input type="date" id="modal-anchor" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-sans);font-size:1.0em;padding:10px 12px;box-sizing:border-box">
+    </div>
+    <div class="form-field" id="modal-onetime-date-wrap" style="display:none">
+      <label>Payment Date</label>
+      <input type="date" id="modal-onetime-date" class="tf-sel">
     </div>
     <div class="form-field" id="modal-payday-wrap" style="">
       <label id="modal-payday-label">Payment Day of Month</label>
@@ -3420,6 +3439,8 @@ let bankTransfers = [];
 // Which account paid each card statement, and when:
 //   { 'cardId-YYYY-M': { acct: '<bank account id>', date: 'YYYY-MM-DD' } }
 let ccPayments = {};
+// A single pay moved to a different day of its month: { 'YYYY-M-incomeId-payIdx': day }
+let incomePayDays = {};
 // ACCOUNT_LINKS_END
 
 // BUSINESS_START
@@ -3792,6 +3813,7 @@ function loadState() {
     if (saved.ccActualSpend) ccActualSpend = saved.ccActualSpend;
     if (Array.isArray(saved.bankTransfers)) bankTransfers = saved.bankTransfers;
     if (saved.ccPayments) ccPayments = saved.ccPayments;
+    if (saved.incomePayDays) incomePayDays = saved.incomePayDays;
     if (saved.bankAccountsData && Array.isArray(saved.bankAccountsData)) {
       bankAccounts.length = 0;
       saved.bankAccountsData.forEach((a, i) => {
@@ -4064,6 +4086,7 @@ function payloadToCaptureShape(pl) {
     creditCards:             pl.creditCards || [],
     bankTransfers:           pl.bankTransfers || [],
     ccPayments:              pl.ccPayments || {},
+    incomePayDays:           pl.incomePayDays || {},
     bankAccounts:            pl.bankAccountsData || [],
     monthlyBankAccounts:     pl.monthlyBankAccounts || {},
     mortgageData:            pl.mortgageData || {},
@@ -4083,6 +4106,7 @@ const UC_SECTIONS = [
   { key: 'creditCards',             label: 'Credit cards',          type: 'list' },
   { key: 'bankTransfers',           label: 'Transfers',             type: 'list' },
   { key: 'ccPayments',              label: 'Card payments',         type: 'map' },
+  { key: 'incomePayDays',           label: 'Pay dates moved',       type: 'map' },
   { key: 'businessBookings',        label: 'Business bookings',     type: 'list' },
   { key: 'businessExpenses',        label: 'Business expenses',     type: 'list' },
   { key: 'incomeAmounts',           label: 'Income amounts',        type: 'map' },
@@ -4337,6 +4361,15 @@ function describeChanges(a, b) {
         (PB[k] ? 'paid from ' + transferEndLabel(PB[k].acct) + ' on ' + PB[k].date : 'payment account removed'));
     });
     push('Transfers & card payments', lines);
+  })();
+  (() => {
+    const A = a.incomePayDays || {}, B = b.incomePayDays || {}, lines = [];
+    mapKeys(A, B).forEach(k => {
+      if (A[k] === B[k]) return;
+      const p = k.split('-'), yr = p[0], mo = p[1], idx = +p[p.length - 1], id = p.slice(2, p.length - 1).join('-');
+      lines.push(nm(id) + ', ' + _ucMon(yr, mo) + ' pay ' + (idx + 1) + ': ' + (B[k] ? 'moved to the ' + B[k] + getDaySuffix(B[k]) : 'back to its usual day'));
+    });
+    push('Pay dates', lines);
   })();
 
   // Plain objects
@@ -5020,6 +5053,7 @@ function buildSavePayload() {
     ccActualSpend,
     bankTransfers,
     ccPayments,
+    incomePayDays,
     bankAccountsData: bankAccounts,
     monthlyBankAccounts,
     mortgageData,
@@ -5098,6 +5132,7 @@ async function loadFromCloud() {
     if (saved.ccActualSpend)   ccActualSpend  = saved.ccActualSpend;
     bankTransfers = Array.isArray(saved.bankTransfers) ? saved.bankTransfers : [];
     ccPayments = saved.ccPayments || {};
+    incomePayDays = saved.incomePayDays || {};
     if (saved.bankAccountsData && Array.isArray(saved.bankAccountsData)) {
       bankAccounts.length = 0;
       saved.bankAccountsData.forEach((a, i) => {
@@ -5847,9 +5882,16 @@ function openEditPay(yr, mo, id, idx, currentAmount) {
   document.getElementById('pay-edit-label').textContent = label;
   document.getElementById('pay-edit-default').textContent = fmtMoney(getIncomeAmountForMonth(id, yr, mo));
   document.getElementById('pay-edit-amount').value = existing;
-  document.getElementById('pay-edit-day').textContent = day ? (MONTHS[mo] + ' ' + day + getDaySuffix(day)) : '';
+  const sched = _incomeScheduledDays(item, yr, mo)[idx];
+  const dEl = document.getElementById('pay-edit-date');
+  dEl.value = day ? _localYMD(new Date(yr, mo, day)) : '';
+  dEl.min = _localYMD(new Date(yr, mo, 1));
+  dEl.max = _localYMD(new Date(yr, mo + 1, 0));
+  document.getElementById('pay-edit-day').textContent = (sched && day !== sched)
+    ? 'Usually the ' + sched + getDaySuffix(sched) + ' \u2014 moved for this pay only'
+    : 'Change it if this pay came early or late (this pay only)';
 
-  const hasActual = getActualPay(yr, mo, id, idx) !== null;
+  const hasActual = getActualPay(yr, mo, id, idx) !== null || !!incomePayDays[yr + '-' + mo + '-' + id + '-' + idx];
   // '' restores the class's own display:flex
   document.getElementById('pay-edit-reset').style.display = hasActual ? '' : 'none';
 
@@ -5865,6 +5907,14 @@ function saveEditPay() {
   const val =  document.getElementById('pay-edit-amount').value;
   document.getElementById('pay-edit-overlay').classList.remove('open');
   pushUndo();
+  // Moved date (same month only)
+  const item = budget.income.find(i => i.id === id);
+  const d = _ymdToDate(document.getElementById('pay-edit-date').value);
+  const dk = yr + '-' + mo + '-' + id + '-' + idx;
+  if (item && d && d.getFullYear() === yr && d.getMonth() === mo) {
+    const sched = _incomeScheduledDays(item, yr, mo)[idx];
+    if (d.getDate() === sched) delete incomePayDays[dk]; else incomePayDays[dk] = d.getDate();
+  }
   setActualPay(yr, mo, id, idx, val);
 }
 
@@ -5883,6 +5933,7 @@ function payEditReset() {
 function clearEditPay(yr, mo, id, idx) {
   document.getElementById('pay-edit-overlay').classList.remove('open');
   pushUndo();
+  delete incomePayDays[yr + '-' + mo + '-' + id + '-' + idx];
   setActualPay(yr, mo, id, idx, null);
 }
 
@@ -7865,6 +7916,7 @@ function openAcctModal(id) {
 }
 function closeAcctModal() {
   _acctModalId = null;
+  closeAcctUpcoming();
   document.getElementById('acct-modal').classList.remove('open');
 }
 function acctModalOpen() {
@@ -7925,34 +7977,68 @@ function renderAcctModal() {
   }
   document.getElementById('acct-balance-box').innerHTML = box;
 
-  // Transactions
-  if (!tx.length) {
-    document.getElementById('acct-tx').innerHTML = '<div style="padding:22px;text-align:center;color:var(--muted);font-size:0.875em">No deposits or payments linked to this account in ' + MONTHS[mo] + '.<br><span style="font-size:0.9em">Pick this account as the deposit account or "paid from" source on Money In / Money Out items, or add one below.</span></div>';
-    return;
-  }
+  // Transactions: what has happened, newest first. Upcoming ones open separately.
+  _acctLastTx = tx;
+  const runs = [];
   let running = isSav ? null : accountBalanceAt(acct, new Date(yr, mo, 0));   // end of previous month
-  const totIn = tx.filter(x => x.amount > 0).reduce((t, x) => t + x.amount, 0);
-  const totOut = tx.filter(x => x.amount < 0).reduce((t, x) => t + x.amount, 0);
-  let html = '<div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:0.75em">' +
+  tx.forEach((x, i) => { if (running !== null) running += x.amount; runs[i] = running; });
+  const isUp = x => new Date(yr, mo, x.day) > today;
+  const past = tx.map((x, i) => i).filter(i => !isUp(tx[i])).reverse();
+  const up = tx.map((x, i) => i).filter(i => isUp(tx[i]));
+  _acctUpIdx = up;
+  _acctRuns = runs;
+  const sum = idx => idx.reduce((t, i) => t + tx[i].amount, 0);
+  const totIn = past.filter(i => tx[i].amount > 0).reduce((t, i) => t + tx[i].amount, 0);
+  const totOut = past.filter(i => tx[i].amount < 0).reduce((t, i) => t + tx[i].amount, 0);
+  let html = '<div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:0.75em;position:sticky;top:0;z-index:1">' +
     '<span style="color:var(--income-green)">In ' + fmtCents(totIn) + '</span><span style="color:var(--expense-red)">Out ' + fmtCents(Math.abs(totOut)) + '</span>' +
-    (running !== null ? '<span style="color:var(--muted)">Start ' + fmtCents(running) + '</span>' : '') + '</div>';
-  tx.forEach((x, i) => {
-    if (running !== null) running += x.amount;
-    const upcoming = new Date(yr, mo, x.day) > today;
-    const tag = x.kind === 'card' ? '<span style="color:var(--accent2)">Card payment</span>'
-      : x.kind === 'transfer' ? '<span style="color:var(--accent2)">Transfer</span>'
-      : x.kind === 'refund' ? '<span style="color:var(--income-green)">Refund</span>'
-      : x.kind === 'deposit' ? 'Deposit' : 'Payment';
-    const amtColor = x.amount >= 0 ? 'var(--income-green)' : 'var(--text)';
-    html += '<div class="acct-tx-row' + (upcoming ? ' upcoming' : '') + '" onclick="acctOpenTx(' + i + ')">' +
-      '<div class="acct-tx-date">' + MONTHS[mo] + '<b>' + x.day + '</b></div>' +
-      '<div style="min-width:0"><div class="acct-tx-name">' + escHtml(x.name) + '</div>' +
-        '<div class="acct-tx-sub">' + [tag, x.sub ? escHtml(x.sub) : '', upcoming ? 'upcoming' : ''].filter(Boolean).join(' &middot; ') + '</div></div>' +
-      '<div><div class="acct-tx-amt" style="color:' + amtColor + '">' + (x.amount >= 0 ? '+' : '-') + fmtCents(Math.abs(x.amount)) + '</div>' +
-        (running !== null ? '<div class="acct-tx-run">' + fmtCents(running) + '</div>' : '') + '</div>' +
-      '</div>';
-  });
+    '<span style="color:var(--muted)">' + (isCur ? 'so far' : (up.length ? '' : MONTHS[mo])) + '</span></div>';
+  if (up.length) {
+    const n = sum(up);
+    html += '<button class="acct-up-btn" style="border-top:none;border-bottom:1px solid var(--border)" onclick="openAcctUpcoming()">' +
+      up.length + ' upcoming this month (' + (n >= 0 ? '+' : '-') + fmtCents(Math.abs(n)) + ') ›</button>';
+  }
+  if (!past.length) {
+    html += '<div style="padding:22px;text-align:center;color:var(--muted);font-size:0.875em">' +
+      (tx.length ? 'Nothing has gone through yet in ' + MONTHS[mo] + '.'
+        : 'No deposits or payments linked to this account in ' + MONTHS[mo] + '.<br><span style="font-size:0.9em">Pick this account as the deposit account or “paid from” on Money In / Money Out items, or add one below.</span>') + '</div>';
+  }
+  past.forEach(i => { html += _acctTxRow(tx[i], i, runs[i], yr, mo, false); });
   document.getElementById('acct-tx').innerHTML = html;
+  if (document.getElementById('acct-up-modal').classList.contains('open')) renderAcctUpcoming();
+}
+
+var _acctLastTx = [], _acctUpIdx = [], _acctRuns = [];
+function _acctTxRow(x, i, run, yr, mo, upcoming) {
+  const tag = x.kind === 'card' ? '<span style="color:var(--accent2)">Card payment</span>'
+    : x.kind === 'transfer' ? '<span style="color:var(--accent2)">Transfer</span>'
+    : x.kind === 'refund' ? '<span style="color:var(--income-green)">Refund</span>'
+    : x.kind === 'deposit' ? 'Deposit' : 'Payment';
+  const amtColor = x.amount >= 0 ? 'var(--income-green)' : 'var(--text)';
+  return '<div class="acct-tx-row" onclick="acctOpenTx(' + i + ')">' +
+    '<div class="acct-tx-date">' + MONTHS[mo] + '<b>' + x.day + '</b></div>' +
+    '<div style="min-width:0"><div class="acct-tx-name">' + escHtml(x.name) + '</div>' +
+      '<div class="acct-tx-sub">' + [tag, x.sub ? escHtml(x.sub) : ''].filter(Boolean).join(' &middot; ') + '</div></div>' +
+    '<div><div class="acct-tx-amt" style="color:' + amtColor + '">' + (x.amount >= 0 ? '+' : '-') + fmtCents(Math.abs(x.amount)) + '</div>' +
+      (run !== null && run !== undefined ? '<div class="acct-tx-run">' + (upcoming ? 'then ' : '') + fmtCents(run) + '</div>' : '') + '</div>' +
+    '</div>';
+}
+
+function openAcctUpcoming() {
+  renderAcctUpcoming();
+  document.getElementById('acct-up-modal').classList.add('open');
+}
+function closeAcctUpcoming() { document.getElementById('acct-up-modal').classList.remove('open'); }
+function renderAcctUpcoming() {
+  const acct = bankAccounts.find(a => a.id === _acctModalId);
+  if (!acct) { closeAcctUpcoming(); return; }
+  document.getElementById('acct-up-title').textContent = 'Upcoming · ' + acct.name;
+  const n = _acctUpIdx.reduce((t, i) => t + _acctLastTx[i].amount, 0);
+  document.getElementById('acct-up-sub').textContent = MONTHS[calMonth] + ' ' + calYear + ' · ' + _acctUpIdx.length + ' item' + (_acctUpIdx.length === 1 ? '' : 's') +
+    ' · net ' + (n >= 0 ? '+' : '-') + fmtCents(Math.abs(n)) + ' · soonest first';
+  document.getElementById('acct-up-list').innerHTML = _acctUpIdx.length
+    ? _acctUpIdx.map(i => _acctTxRow(_acctLastTx[i], i, _acctRuns[i], calYear, calMonth, true)).join('')
+    : '<div style="padding:22px;text-align:center;color:var(--muted);font-size:0.875em">Nothing else coming up this month.</div>';
 }
 
 function acctShowConfirm() {
@@ -7978,7 +8064,7 @@ function acctConfirmBalance() {
 function acctOpenTx(i) {
   const acct = bankAccounts.find(a => a.id === _acctModalId);
   if (!acct) return;
-  const x = accountTxForMonth(acct, calYear, calMonth)[i];
+  const x = _acctLastTx[i] || accountTxForMonth(acct, calYear, calMonth)[i];
   if (!x) return;
   const r = x.ref;
   if (r.type === 'income') {
@@ -8000,8 +8086,8 @@ function acctAddDeposit() {
   if (!acct) return;
   openIncomeModal();
   document.getElementById('modal-freq').value = 'onetime';
+  document.getElementById('modal-onetime-date').value = _localYMD(new Date(calYear, calMonth, _acctDefaultDay()));
   toggleIncomeScheduleFields();
-  document.getElementById('modal-payday').value = _acctDefaultDay();
   populateIncomeDest(accountSourceKey(acct));
 }
 // + Payment: a Money Out item paid from this account
@@ -8407,6 +8493,7 @@ function captureState() {
     creditCards:     creditCards,
     bankTransfers:   bankTransfers,
     ccPayments:      ccPayments,
+    incomePayDays:   incomePayDays,
     bankAccounts:    bankAccounts,
     monthlyBankAccounts: monthlyBankAccounts,
     mortgageData:    JSON.parse(JSON.stringify(mortgageData)),
@@ -8459,6 +8546,7 @@ function performUndo() {
   if (snap.creditCards) creditCards = snap.creditCards;
   if (snap.bankTransfers) bankTransfers = snap.bankTransfers;
   if (snap.ccPayments) ccPayments = snap.ccPayments;
+  if (snap.incomePayDays) incomePayDays = snap.incomePayDays;
   if (snap.monthlyBankAccounts) {
     Object.keys(monthlyBankAccounts).forEach(k => delete monthlyBankAccounts[k]);
     Object.assign(monthlyBankAccounts, snap.monthlyBankAccounts);
@@ -8586,6 +8674,8 @@ function editIncome(id) {
   document.getElementById('modal-anchor').value = item.anchorDate || '';
   document.getElementById('modal-payday').value = item.payDay || '';
   document.getElementById('modal-payday2').value = item.payDay2 || '';
+  document.getElementById('modal-onetime-date').value = item.oneTime
+    ? _localYMD(new Date(item.oneTimeYr, item.oneTimeMo, item.payDay || 1)) : '';
   populateIncomeDest(item.destAccount || '');
   toggleIncomeScheduleFields();
   const delBtn = document.getElementById('income-modal-delete-btn');
@@ -8612,6 +8702,7 @@ function openIncomeModal() {
   document.getElementById('modal-anchor').value = '';
   document.getElementById('modal-payday').value = '';
   document.getElementById('modal-payday2').value = '';
+  document.getElementById('modal-onetime-date').value = '';
   document.getElementById('modal-repeat-wrap').style.display = '';
   document.getElementById('modal-repeat').checked = true;
   populateIncomeDest('');
@@ -8625,6 +8716,15 @@ function openIncomeModal() {
 }
 
 function getIncomeDaysInMonth(item, yr, mo) {
+  const days = _incomeScheduledDays(item, yr, mo);
+  // A pay that came early/late is moved for that month only (keeps its pay number)
+  return days.map((d, idx) => {
+    const o = incomePayDays[yr + '-' + mo + '-' + item.id + '-' + idx];
+    return o ? Math.min(o, new Date(yr, mo + 1, 0).getDate()) : d;
+  });
+}
+
+function _incomeScheduledDays(item, yr, mo) {
   const dim = new Date(yr, mo+1, 0).getDate();
   const freq = item.freq || 'biweekly';
   const clamp = d => Math.min(d, dim);
@@ -8660,7 +8760,16 @@ function toggleIncomeScheduleFields() {
   const isOnetime = freq === 'onetime';
 
   document.getElementById('modal-anchor-wrap').style.display  = cyclic.includes(freq) ? '' : 'none';
-  document.getElementById('modal-payday-wrap').style.display  = (fixedSingle.includes(freq)||isOnetime) ? '' : 'none';
+  document.getElementById('modal-payday-wrap').style.display  = fixedSingle.includes(freq) ? '' : 'none';
+  // One-time payments pick a real date (any month), not just a day number
+  document.getElementById('modal-onetime-date-wrap').style.display = isOnetime ? '' : 'none';
+  const od = document.getElementById('modal-onetime-date');
+  if (isOnetime && od && !od.value) {
+    const pd = parseInt(document.getElementById('modal-payday').value) || null;
+    const ref = window._calReturnDay;
+    od.value = ref ? _localYMD(new Date(ref.yr, ref.mo, ref.day))
+      : _localYMD(new Date(calYear, calMonth, pd || _acctDefaultDay()));
+  }
   document.getElementById('modal-payday2-wrap').style.display = 'none';
   document.getElementById('modal-payday-label').textContent   = 'Payment Day of Month';
   document.getElementById('modal-amount-label').textContent   = isOnetime ? 'Payment Amount (CAD)' : 'Per-payment Amount (CAD)';
@@ -8714,9 +8823,15 @@ function saveIncomeModal() {
       if (item.oneTime) {
         // Keep one-time items stored as monthly internally; update the actual pay
         // stamp for their month rather than the recurring base amount.
+        const od = _ymdToDate(document.getElementById('modal-onetime-date').value);
+        if (od && (od.getFullYear() !== item.oneTimeYr || od.getMonth() !== item.oneTimeMo)) {
+          // Moved to another month: the amount moves with it
+          delete incomeActuals[actualKey(item.oneTimeYr, item.oneTimeMo, item.id, 0)];
+          item.oneTimeYr = od.getFullYear(); item.oneTimeMo = od.getMonth();
+        }
+        if (od) item.payDay = od.getDate();
+        else if (payDay) item.payDay = Math.min(31, Math.max(1, payDay));
         setActualPay(item.oneTimeYr, item.oneTimeMo, item.id, 0, amount);
-        // The payment day can be corrected too (it was previously ignored on edit)
-        if (payDay) item.payDay = Math.min(31, Math.max(1, payDay));
       } else {
         item.freq = freq; item.anchorDate = anchorDate; item.payDay = payDay; item.payDay2 = payDay2;
         incomeAmounts[modalEditId] = amount;
@@ -8732,9 +8847,10 @@ function saveIncomeModal() {
       // One-time: create as monthly on the chosen day, base amount 0,
       // then stamp the real amount via incomeActuals for just this month.
       // oneTime:true flag tells renderIncome/totals to skip other months.
-      const day = window._calReturnDay ? window._calReturnDay.day : (payDay || 1);
-      const yr  = window._calReturnDay ? window._calReturnDay.yr  : calYear;
-      const mo  = window._calReturnDay ? window._calReturnDay.mo  : calMonth;
+      const od = freq === 'onetime' ? _ymdToDate(document.getElementById('modal-onetime-date').value) : null;
+      const day = od ? od.getDate() : (window._calReturnDay ? window._calReturnDay.day : (payDay || 1));
+      const yr  = od ? od.getFullYear() : (window._calReturnDay ? window._calReturnDay.yr  : calYear);
+      const mo  = od ? od.getMonth() : (window._calReturnDay ? window._calReturnDay.mo  : calMonth);
       budget.income.push({ id, name, freq: 'monthly', amount: 0, anchorDate: null, payDay: day, payDay2: null, oneTime: true, oneTimeYr: yr, oneTimeMo: mo, ...(destAccount ? { destAccount } : {}) });
       incomeAmounts[id] = 0;
       setActualPay(yr, mo, id, 0, amount);
@@ -14418,7 +14534,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     <div id="pay-edit-label" style="font-family:var(--font-mono);font-size:0.7857em;color:var(--muted);margin-bottom:20px">Chad Paycheck — Feb 2026 (pay 2 of 2)</div>
     <div style="margin-bottom:16px">
       <div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Pay date</div>
-      <div id="pay-edit-day" style="font-size:1.0em;color:var(--text)">Feb 26th</div>
+      <input type="date" id="pay-edit-date" class="tf-sel">
+      <div id="pay-edit-day" style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px"></div>
     </div>
     <div style="margin-bottom:16px">
       <div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Default amount</div>
