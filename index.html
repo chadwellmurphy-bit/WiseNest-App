@@ -7998,9 +7998,10 @@ function renderAcctModal() {
       '<div class="acct-bal-tap" role="button" tabindex="0" title="Tap to update" onclick="acctShowConfirm()" style="color:' + (bal < 0 ? 'var(--expense-red)' : 'var(--text)') + '">' + fmtCents(bal) + '</div></div>' +
       upBtn + '</div>' +
       '<div id="acct-confirm-row" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">' +
-        '<div style="font-size:0.8em;color:var(--muted);margin-bottom:6px">What does your bank show right now?</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:0.8em;color:var(--muted)">What does your bank show right now?</span>' +
+        '<button onclick="acctShowConfirm()" aria-label="Close" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.3em;line-height:1;padding:0 2px">&times;</button></div>' +
         '<div style="display:flex;gap:8px"><input type="number" step="0.01" id="acct-confirm-input" class="tf-sel" style="flex:1" value="' + (Math.round(accountBalanceAt(acct, today) * 100) / 100) + '">' +
-        '<button class="btn-primary" onclick="acctConfirmBalance()">Save</button></div></div>';
+        '<button class="btn-primary" onclick="acctConfirmBalance()">Confirm</button></div></div>';
   }
   document.getElementById('acct-balance-box').innerHTML = box;
 
