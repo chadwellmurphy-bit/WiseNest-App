@@ -446,6 +446,24 @@
     grid-template-columns: repeat(3, 1fr);
     gap: 12px;
   }
+  .bank-hero { display:grid; grid-template-columns: 1.4fr 1fr 1fr; gap:12px; }
+  .bank-hero .stat-card { padding:18px 18px 16px; }
+  .bank-hero .label { font-family:var(--font-mono); font-size:0.7em; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
+  .bank-hero .value { font-size:clamp(1.4em,4.5vw,2.1em); margin-top:6px; }
+  .bank-hero .sub { font-family:var(--font-mono); font-size:0.72em; color:var(--muted); margin-top:6px; line-height:1.5; }
+  .bank-hero-main .value { font-size:clamp(1.8em,6vw,2.6em); }
+  .bank-hero-split { display:flex; flex-wrap:wrap; gap:4px 16px; font-family:var(--font-mono); font-size:0.75em; color:var(--muted); margin-top:8px; }
+  .bank-hero-split i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; }
+  .bank-hero-bar { display:flex; height:6px; border-radius:3px; overflow:hidden; margin-top:10px; background:var(--surface2); }
+  .bank-tile { transition: border-color .15s, transform .15s; }
+  .bank-tile:hover { border-color: var(--accent2); }
+  @media (max-width: 600px) {
+    .bank-tile-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  }
+  @media (max-width: 700px) {
+    .bank-hero { grid-template-columns: 1fr 1fr; }
+    .bank-hero-main { grid-column: 1 / -1; }
+  }
   .bank-group-label {
     font-family: var(--font-mono);
     font-size: 0.7em;
@@ -2834,17 +2852,9 @@
 
   <!-- ══ PAGE: BANK ACCOUNTS ══════════════════════════════════════ -->
   <div class="page" id="page-bankaccounts">
-    <div class="section" id="bank-panel">
-      <div class="section-header">
-        <div class="section-title">
-          <div class="section-dot" style="background: var(--income-green)"></div>
-          Bank Accounts
-        </div>
-        <div class="section-total" style="color: var(--income-green)" id="bank-total">$0</div>
-      </div>
-      <div id="bank-body"></div>
-      <button class="add-btn" onclick="addBankAccount()">+ Add account</button>
-    </div>
+    <div id="bank-overview"></div>
+    <div id="bank-body"></div>
+    <button class="add-btn" style="margin-top:16px;border-radius:12px;border:1px dashed var(--border)" onclick="addBankAccount()">+ Add account</button>
   </div><!-- /page-bankaccounts -->
 
   <!-- ══ PAGE: MORTGAGE ════════════════════════════════════════ -->
@@ -7348,21 +7358,7 @@ function renderBankSummary() {
   const chequing = accts.filter(a => a.type !== 'savings');
   const savings  = accts.filter(a => a.type === 'savings');
 
-  const tile = (a) => {
-    const presetKey = getBankPresetKey(a);
-    const icon = a.logo
-      ? '<img src="' + a.logo + '" style="width:30px;height:30px;border-radius:6px;object-fit:contain;background:#fff">'
-      : (presetKey ? bankBadgeHTML(presetKey, 30) : '<span style="width:30px;height:30px;display:inline-block"></span>');
-    const asOf = a.type !== 'savings' && a.asOf ? 'live \u00b7 confirmed ' + fmtAsOf(a.asOf).replace(/, \d{4}$/, '') : (a.asOf ? 'as of ' + fmtAsOf(a.asOf) : '');
-    return '<div class="stat-card" style="padding:14px 12px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px">' +
-      icon +
-      '<div style="font-size:0.78em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escapeHtml(a.name) + '</div>' +
-      '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:' + ((a.balance || 0) < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + fmtCents(a.balance || 0) + '</div>' +
-      (asOf ? '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--muted)">' + asOf + '</div>' : '') +
-    '</div>';
-  };
-
-  const grid = (list) => '<div class="bank-tile-grid" style="grid-template-columns:repeat(' + Math.min(list.length, 3) + ',1fr)">' + list.map(tile).join('') + '</div>';
+  const grid = (list) => bankTileGrid(list, calYear, calMonth);
 
   let html = '';
   if (chequing.length) {
@@ -8170,101 +8166,117 @@ function stopTransfer() {
   _afterTransferChange();
 }
 
+// One account tile, shared by the dashboard and the Bank Accounts page.
+// opts.page adds the transaction count and an edit button.
+function bankTileHTML(a, yr, mo, opts) {
+  opts = opts || {};
+  const presetKey = getBankPresetKey(a);
+  const sz = opts.page ? 36 : 30;
+  const icon = a.logo
+    ? '<img src="' + a.logo + '" style="width:' + sz + 'px;height:' + sz + 'px;border-radius:7px;object-fit:contain;background:#fff">'
+    : (presetKey ? bankBadgeHTML(presetKey, sz) : '<span style="width:' + sz + 'px;height:' + sz + 'px;display:inline-block"></span>');
+  const live = accountIsLive(a, yr, mo);
+  let note;
+  if (live) {
+    const conf = a.confirmedBalance !== undefined ? a.confirmedBalance : a.balance;
+    const moved = (a.balance || 0) - (conf || 0);
+    note = 'live · confirmed ' + fmtAsOf(a.asOf).replace(/, \d{4}$/, '');
+    if (opts.page && Math.abs(moved) >= 0.005) {
+      note += '<br><span style="color:' + (moved >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' + (moved >= 0 ? '+' : '−') + fmtCents(Math.abs(moved)) + ' since</span>';
+    }
+  } else if (a.type === 'savings') {
+    note = opts.page ? '<span style="color:var(--accent2)">tap to start tracking ›</span>' : 'entered for ' + MONTHS[mo];
+  } else {
+    note = 'balance not confirmed';
+  }
+  const nTx = opts.page ? accountTxForMonth(a, yr, mo).length : 0;
+  const bal = a.balance || 0;
+  return '<div class="stat-card bank-tile" onclick="openAcctModal(\'' + a.id + '\')" style="cursor:pointer;position:relative;padding:' + (opts.page ? '18px 14px 14px' : '14px 12px') + ';display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px">' +
+    (opts.page ? '<button class="icon-btn" onclick="event.stopPropagation();editBankAccount(\'' + a.id + '\')" title="Edit account" style="opacity:1;position:absolute;top:8px;right:8px"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg></button>' : '') +
+    icon +
+    '<div style="font-size:0.78em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escapeHtml(a.name) + '</div>' +
+    '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:' + (bal < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + fmtCents(bal) + '</div>' +
+    '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--muted);line-height:1.5">' + note + '</div>' +
+    (opts.page ? '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--accent2);margin-top:2px">' + nTx + ' transaction' + (nTx === 1 ? '' : 's') + ' in ' + MONTHS[mo] + ' ›</div>' : '') +
+  '</div>';
+}
+
+function bankTileGrid(list, yr, mo, opts) {
+  return '<div class="bank-tile-grid" style="grid-template-columns:repeat(' + Math.min(list.length, 3) + ',1fr)">' +
+    list.map(a => bankTileHTML(a, yr, mo, opts)).join('') + '</div>';
+}
+
+// Money moving in and out of your accounts in a month (transfers between your
+// own bank accounts cancel out, so they're left out)
+function bankFlowsForMonth(yr, mo, upToDay) {
+  let inn = 0, out = 0;
+  bankAccounts.forEach(a => {
+    accountTxForMonth(a, yr, mo).forEach(x => {
+      if (upToDay && x.day > upToDay) return;
+      if (x.kind === 'transfer' && x.ref) {
+        const t = bankTransfers.find(z => z.id === x.ref.id);
+        if (t && bankAccounts.some(b => b.id === t.from) && bankAccounts.some(b => b.id === t.to)) return;
+      }
+      if (x.amount >= 0) inn += x.amount; else out -= x.amount;
+    });
+  });
+  return { inn, out };
+}
+
 function renderBankAccounts() {
   const body = document.getElementById('bank-body');
+  const ov = document.getElementById('bank-overview');
   if (!body) return;
   const yr = calYear, mo = calMonth;
-  const monthData = getBankAccountsForMonth(yr, mo);
-  const total = monthData.reduce((s, a) => s + a.balance, 0);
-  const totalEl = document.getElementById('bank-total');
-  if (totalEl) totalEl.textContent = fmtCents(total);
+  const accts = getBankAccountsForMonth(yr, mo);
+  const chequing = accts.filter(a => a.type !== 'savings');
+  const savings  = accts.filter(a => a.type === 'savings');
+  const sum = l => l.reduce((t, a) => t + (a.balance || 0), 0);
+  const total = sum(accts);
 
-  const prevMo = mo === 0 ? 11 : mo - 1;
-  const prevYr = mo === 0 ? yr - 1 : yr;
-  const prevData = getBankAccountsForMonth(prevYr, prevMo);
-
-  function renderAccountRow(a) {
-    const isSavings = a.type === 'savings';
-    const asOfLabel = fmtAsOf(a.asOf);
-    const logoSrc = getBankLogo(a);
-    const presetKey = getBankPresetKey(a);
-    const logoHtml = logoSrc
-      ? `<img src="${logoSrc}" style="width:20px;height:20px;border-radius:4px;object-fit:contain;background:#fff;flex-shrink:0">`
-      : (presetKey
-          ? bankBadgeHTML(presetKey, 20)
-          : `<span style="width:20px;height:20px;border-radius:4px;background:var(--surface2);flex-shrink:0;display:inline-block"></span>`);
-
-    let subLine;
-    if (isSavings && !savingsIsLive(a, yr, mo)) {
-      const prevSnap = getSavingsBalanceForMonth(a.id, prevYr, prevMo);
-      if (prevSnap !== null) {
-        const diff = a.balance - prevSnap;
-        if (diff > 0) {
-          subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--income-green);margin-top:4px">▲ ${fmt(diff)} vs last month</div>`;
-        } else if (diff < 0) {
-          subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--expense-red);margin-top:4px">▼ ${fmt(Math.abs(diff))} vs last month</div>`;
-        } else {
-          subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px">no change vs last month</div>`;
-        }
-      } else {
-        subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px;font-style:italic">no prior month to compare</div>`;
-      }
-      if (a.asOf === undefined || a.asOf === '') {
-        subLine += `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--accent2);margin-top:3px">tap to start tracking deposits ›</div>`;
-      }
-    } else {
-      if (asOfLabel) {
-        const moved = a.balance - (a.confirmedBalance !== undefined ? a.confirmedBalance : a.balance);
-        const movedTxt = Math.abs(moved) >= 0.005
-          ? ` · <span style="color:${moved >= 0 ? 'var(--income-green)' : 'var(--expense-red)'}">${moved >= 0 ? '+' : '-'}${fmtCents(Math.abs(moved)).slice(moved >= 0 ? 0 : 1)} since</span>`
-          : '';
-        subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px">confirmed ${fmtCents(a.confirmedBalance !== undefined ? a.confirmedBalance : a.balance)} on ${asOfLabel}${movedTxt}</div>`;
-      } else {
-        subLine = `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--muted);margin-top:4px;font-style:italic">balance not yet confirmed</div>`;
-      }
-      const nTx = accountTxForMonth(a, yr, mo).length;
-      subLine += `<div style="font-family:var(--font-mono);font-size:0.7143em;color:var(--accent2);margin-top:3px">${nTx} transaction${nTx === 1 ? '' : 's'} in ${MONTHS[mo]} ›</div>`;
+  // ── Summary
+  if (ov) {
+    if (!accts.length) { ov.innerHTML = ''; }
+    else {
+      const today = _todayDate();
+      const dim = new Date(yr, mo + 1, 0).getDate();
+      const isCur = today.getFullYear() === yr && today.getMonth() === mo;
+      const isPast = new Date(yr, mo, dim) < today;
+      const f = bankFlowsForMonth(yr, mo, isCur ? today.getDate() : null);
+      const endMonth = bankAccounts.reduce((t, a) => t + (accountIsLive(a, yr, mo)
+        ? accountBalanceAt(a, new Date(yr, mo, dim))
+        : ((getBankAccountsForMonth(yr, mo).find(x => x.id === a.id) || a).balance || 0)), 0);
+      const net = f.inn - f.out;
+      const label = (t) => '<div class="label">' + t + '</div>';
+      ov.innerHTML =
+        '<div class="bank-hero">' +
+          '<div class="stat-card bank-hero-main">' +
+            label(isCur ? 'In your accounts today' : (isPast ? 'In your accounts, end of ' + MONTHS[mo] : 'Projected, end of ' + MONTHS[mo])) +
+            '<div class="value" style="color:' + (total < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + fmtCents(total) + '</div>' +
+            '<div class="bank-hero-split">' +
+              (chequing.length ? '<span><i style="background:var(--accent2)"></i>Chequing ' + fmtCents(sum(chequing)) + '</span>' : '') +
+              (savings.length ? '<span><i style="background:var(--income-green)"></i>Savings ' + fmtCents(sum(savings)) + '</span>' : '') +
+            '</div>' +
+            (total > 0 && chequing.length && savings.length
+              ? '<div class="bank-hero-bar"><div style="width:' + Math.max(0, Math.min(100, sum(chequing) / total * 100)) + '%;background:var(--accent2)"></div><div style="flex:1;background:var(--income-green)"></div></div>' : '') +
+          '</div>' +
+          '<div class="stat-card">' + label((isCur ? MONTHS[mo] + ' so far' : MONTHS[mo] + (isPast ? '' : ' expected'))) +
+            '<div class="value" style="color:' + (net >= 0 ? 'var(--income-green)' : 'var(--expense-red)') + '">' + (net >= 0 ? '+' : '−') + fmtCents(Math.abs(net)) + '</div>' +
+            '<div class="sub"><span style="color:var(--income-green)">In ' + fmtCents(f.inn) + '</span> · <span style="color:var(--expense-red)">Out ' + fmtCents(f.out) + '</span></div></div>' +
+          (isCur ? '<div class="stat-card">' + label('Projected end of ' + MONTHS[mo]) +
+            '<div class="value" style="color:' + (endMonth < 0 ? 'var(--expense-red)' : 'var(--text)') + '">' + fmtCents(endMonth) + '</div>' +
+            '<div class="sub">after upcoming deposits &amp; payments</div></div>' : '') +
+        '</div>';
     }
-
-    return `
-    <div class="bank-item" style="cursor:pointer" onclick="openAcctModal('${a.id}')">
-      <div style="flex:1">
-        <div style="display:flex;align-items:center;gap:6px;font-size:0.9286em;font-weight:500">
-          ${logoHtml}${escHtml(a.name)}
-        </div>
-        ${subLine}
-      </div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <div class="bank-value">${fmtCents(a.balance)}</div>
-        <div class="item-actions" style="opacity:1">
-          <button class="icon-btn" onclick="event.stopPropagation();editBankAccount('${a.id}')" title="Edit">
-            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>`;
   }
 
-  const monthName = MONTHS[mo] + ' ' + yr;
-  const header = `<div style="padding:10px 20px 6px;background:var(--surface2);border-bottom:1px solid var(--border)">
-    <span style="font-family:var(--font-mono,monospace);font-size:0.7143em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${monthName}</span>
-  </div>`;
-
-  const chequing = monthData.filter(a => a.type !== 'savings');
-  const savings  = monthData.filter(a => a.type === 'savings');
-
-  let html = header;
-  if (chequing.length === 0 && savings.length === 0) {
-    html += '<div style="padding:20px;font-family:var(--font-mono);font-size:0.8571em;color:var(--muted);text-align:center">No accounts yet. Add one below.</div>';
+  // ── Account tiles
+  let html = '';
+  if (!accts.length) {
+    html = '<div class="stat-card" style="text-align:center;color:var(--muted);font-size:0.9em;padding:28px">No accounts yet. Add one below.</div>';
   } else {
-    if (chequing.length > 0) {
-      html += `<div style="padding:6px 20px 2px;font-family:var(--font-mono);font-size:0.6429em;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;background:var(--surface2);border-bottom:1px solid var(--border)">Chequing</div>`;
-      html += chequing.map(a => renderAccountRow(a)).join('');
-    }
-    if (savings.length > 0) {
-      html += `<div style="padding:6px 20px 2px;font-family:var(--font-mono);font-size:0.6429em;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;background:var(--surface2);border-bottom:1px solid var(--border)${chequing.length > 0 ? ';border-top:1px solid var(--border)' : ''}">Savings</div>`;
-      html += savings.map(a => renderAccountRow(a)).join('');
-    }
+    if (chequing.length) html += '<div class="bank-group-label" style="margin-top:18px">Chequing</div>' + bankTileGrid(chequing, yr, mo, { page: true });
+    if (savings.length)  html += '<div class="bank-group-label" style="margin-top:18px">Savings</div>' + bankTileGrid(savings, yr, mo, { page: true });
   }
   body.innerHTML = html;
 }
