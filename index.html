@@ -3605,11 +3605,18 @@ function populateSourcePicker() {
   if (!sel) return;
   let html = '<option value="">None</option>';
   // Only real sources the user has: their accounts and their credit cards.
-  if (bankAccounts.length) {
+  const openAccts = bankAccounts.filter(a => accountOpenIn(a, calYear, calMonth));
+  const closedAccts = bankAccounts.filter(a => !accountOpenIn(a, calYear, calMonth));
+  if (openAccts.length) {
     html += '<optgroup label="My accounts">';
-    bankAccounts.forEach(a => {
+    openAccts.forEach(a => {
       html += '<option value="' + accountSourceKey(a) + '">' + escapeHtml(a.name) + '</option>';
     });
+    html += '</optgroup>';
+  }
+  if (closedAccts.length) {
+    html += '<optgroup label="Closed accounts">';
+    closedAccts.forEach(a => { html += '<option value="' + accountSourceKey(a) + '">' + escapeHtml(a.name) + ' (closed)</option>'; });
     html += '</optgroup>';
   }
   if (creditCards.length) {
@@ -7601,7 +7608,7 @@ function setSavingsBalanceForMonth(id, yr, mo, balance) {
 }
 
 function getBankAccountsForMonth(yr, mo) {
-  return bankAccounts.map(acc => {
+  return bankAccounts.filter(acc => accountOpenIn(acc, yr, mo)).map(acc => {
     if (acc.type !== 'savings') {
       // Chequing: the confirmed balance rolled forward (or back) through its transactions
       return acc.asOf ? { ...acc, confirmedBalance: acc.balance, balance: accountBalanceForMonth(acc, yr, mo) } : acc;
@@ -8097,9 +8104,9 @@ function acctAddPayment() {
 
 // ── Transfers ──
 var _transferEditId = null;
-function _transferOptions(includeInvest) {
+function _transferOptions(includeInvest, keep) {
   let h = '';
-  bankAccounts.forEach(a => { h += '<option value="' + a.id + '">' + escHtml(a.name) + (a.type === 'savings' ? ' (savings)' : '') + '</option>'; });
+  bankAccounts.filter(a => accountOpenIn(a, calYear, calMonth) || (keep || []).includes(a.id)).forEach(a => { h += '<option value="' + a.id + '">' + escHtml(a.name) + (a.type === 'savings' ? ' (savings)' : '') + '</option>'; });
   if (includeInvest && investments.length) {
     h += '<optgroup label="Investments">';
     investments.forEach(inv => { h += '<option value="inv:' + escHtml(String(inv.id != null ? inv.id : inv.name)) + '">' + escHtml(inv.name) + '</option>'; });
@@ -8110,8 +8117,9 @@ function _transferOptions(includeInvest) {
 function openTransferModal(id) {
   _transferEditId = id;
   const t = id ? bankTransfers.find(x => x.id === id) : null;
-  document.getElementById('transfer-from').innerHTML = _transferOptions(false);
-  document.getElementById('transfer-to').innerHTML = _transferOptions(true);
+  const keep = t ? [t.from, t.to] : [];
+  document.getElementById('transfer-from').innerHTML = _transferOptions(false, keep);
+  document.getElementById('transfer-to').innerHTML = _transferOptions(true, keep);
   document.getElementById('transfer-title').textContent = t ? 'Edit transfer' : 'Transfer';
   const other = bankAccounts.find(a => a.id !== _acctModalId);
   document.getElementById('transfer-from').value = t ? t.from : (_acctModalId || (bankAccounts[0] && bankAccounts[0].id) || '');
@@ -8189,15 +8197,13 @@ function bankTileHTML(a, yr, mo, opts) {
   } else {
     note = 'balance not confirmed';
   }
-  const nTx = opts.page ? accountTxForMonth(a, yr, mo).length : 0;
   const bal = a.balance || 0;
   return '<div class="stat-card bank-tile" onclick="openAcctModal(\'' + a.id + '\')" style="cursor:pointer;position:relative;padding:' + (opts.page ? '18px 14px 14px' : '14px 12px') + ';display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px">' +
-    (opts.page ? '<button class="icon-btn" onclick="event.stopPropagation();editBankAccount(\'' + a.id + '\')" title="Edit account" style="opacity:1;position:absolute;top:8px;right:8px"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-9 9H2v-3L11 2z"/></svg></button>' : '') +
     icon +
     '<div style="font-size:0.78em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + escapeHtml(a.name) + '</div>' +
     '<div class="value" style="font-size:clamp(1.1em,4vw,1.5em);color:' + (bal < 0 ? 'var(--expense-red)' : 'var(--income-green)') + '">' + fmtCents(bal) + '</div>' +
-    '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--muted);line-height:1.5">' + note + '</div>' +
-    (opts.page ? '<div style="font-family:var(--font-mono);font-size:0.62em;color:var(--accent2);margin-top:2px">' + nTx + ' transaction' + (nTx === 1 ? '' : 's') + ' in ' + MONTHS[mo] + ' ›</div>' : '') +
+    // Kept simple: only a not-yet-tracked savings account gets a note (its call to action)
+    (opts.page && !live && a.type === 'savings' ? '<div style="font-family:var(--font-mono);font-size:0.62em;line-height:1.5">' + note + '</div>' : '') +
   '</div>';
 }
 
@@ -8210,7 +8216,7 @@ function bankTileGrid(list, yr, mo, opts) {
 // own bank accounts cancel out, so they're left out)
 function bankFlowsForMonth(yr, mo, upToDay) {
   let inn = 0, out = 0;
-  bankAccounts.forEach(a => {
+  bankAccounts.filter(a => accountOpenIn(a, yr, mo)).forEach(a => {
     accountTxForMonth(a, yr, mo).forEach(x => {
       if (upToDay && x.day > upToDay) return;
       if (x.kind === 'transfer' && x.ref) {
@@ -8243,7 +8249,7 @@ function renderBankAccounts() {
       const isCur = today.getFullYear() === yr && today.getMonth() === mo;
       const isPast = new Date(yr, mo, dim) < today;
       const f = bankFlowsForMonth(yr, mo, isCur ? today.getDate() : null);
-      const endMonth = bankAccounts.reduce((t, a) => t + (accountIsLive(a, yr, mo)
+      const endMonth = bankAccounts.filter(a => accountOpenIn(a, yr, mo)).reduce((t, a) => t + (accountIsLive(a, yr, mo)
         ? accountBalanceAt(a, new Date(yr, mo, dim))
         : ((getBankAccountsForMonth(yr, mo).find(x => x.id === a.id) || a).balance || 0)), 0);
       const net = f.inn - f.out;
@@ -8344,6 +8350,7 @@ function addBankAccount() {
   document.getElementById('bank-modal-asof').value = '';
   document.getElementById('bank-modal-type').value = 'chequing';
   document.getElementById('bank-modal-delete-btn').style.display = 'none';
+  document.getElementById('bank-modal-balance-row').style.display = '';
   const prev = document.getElementById('bank-modal-logo-preview');
   if (prev) prev.innerHTML = '<span style="font-size:0.7em;color:var(--muted);font-family:var(--font-mono)">logo</span>';
   // Reset picker selection
@@ -8366,8 +8373,10 @@ function editBankAccount(id) {
   const effectiveBalance = liveNow
     ? Math.round(accountBalanceAt(acc, _todayDate()) * 100) / 100
     : (acc.type === 'savings' ? (getSavingsBalanceForMonth(acc.id, calYear, calMonth) ?? acc.balance) : acc.balance);
-  document.getElementById('bank-modal-title').textContent = 'Edit Account'
-    + (acc.type === 'savings' ? ' — ' + MONTHS[calMonth] + ' ' + calYear : '');
+  document.getElementById('bank-modal-title').textContent = 'Edit Account';
+  // Balances are updated from the account's transactions window now
+  document.getElementById('bank-modal-balance-row').style.display = 'none';
+  _refreshCloseAcctUI(acc);
   document.getElementById('bank-modal-name').value = acc.name;
   document.getElementById('bank-modal-balance').value = effectiveBalance;
   document.getElementById('bank-modal-asof').value = acc.asOf || '';
@@ -8405,24 +8414,14 @@ function saveBankModal() {
   if (logo) LOGOS[name.split(' ')[0].toLowerCase()] = logo;
 
   if (bankEditId !== null) {
-    // Editing existing account
+    // Editing existing account: name, type, bank and logo only. The balance and
+    // its confirmed date are managed from the account's transactions window.
     const acc = bankAccounts.find(a => a.id === bankEditId);
     if (!acc) return;
     acc.name = name;
     acc.type = type;
-    if (type !== 'savings') acc.asOf = asOf;
     if (presetKey) acc.presetKey = presetKey; else delete acc.presetKey;
     if (logo) acc.logo = logo;
-    if (type === 'savings') {
-      setSavingsBalanceForMonth(acc.id, calYear, calMonth, safeBalance);
-      const now = new Date();
-      if (monthVal(calYear, calMonth) >= monthVal(now.getFullYear(), now.getMonth())) {
-        acc.balance = safeBalance;            // confirmed today: deposits/transfers from here on update it
-        acc.asOf = _localYMD(now);
-      }
-    } else {
-      acc.balance = safeBalance;
-    }
   } else {
     // New account
     const id = 'bank_' + Date.now();
@@ -8469,6 +8468,43 @@ function deleteBankAccount(id) {
   renderBankAccounts();
   renderCalendar();
   updateSummary();
+}
+
+// An account closed after a month disappears from the months that follow;
+// every earlier month (and its transactions) is kept.
+function accountOpenIn(a, yr, mo) {
+  if (!a || a.closedYr === undefined) return true;
+  return monthVal(yr, mo) <= monthVal(a.closedYr, a.closedMo);
+}
+function _refreshCloseAcctUI(acc) {
+  const btn = document.getElementById('bank-modal-close-acct');
+  const note = document.getElementById('bank-modal-close-note');
+  if (!btn || !note) return;
+  if (acc && acc.closedYr !== undefined) {
+    btn.textContent = 'Reopen account';
+    note.textContent = 'Closed after ' + MONTHS[acc.closedMo] + ' ' + acc.closedYr + '. Reopening brings it back for the following months.';
+  } else {
+    btn.textContent = 'Close account';
+    note.textContent = 'Removes it from the months after ' + MONTHS[calMonth] + ' ' + calYear + '. All earlier months and their transactions stay on file.';
+  }
+}
+function toggleCloseBankAccount() {
+  const acc = bankAccounts.find(a => a.id === bankEditId);
+  if (!acc) return;
+  if (acc.closedYr !== undefined) {
+    if (!confirm('Reopen ' + acc.name + '?')) return;
+    pushUndo();
+    delete acc.closedYr; delete acc.closedMo;
+  } else {
+    const nm = calMonth === 11 ? 0 : calMonth + 1, ny = calMonth === 11 ? calYear + 1 : calYear;
+    if (!confirm('Close ' + acc.name + ' after ' + MONTHS[calMonth] + ' ' + calYear + '?\n\nIt won’t appear from ' + MONTHS[nm] + ' ' + ny +
+      ' on. Everything up to ' + MONTHS[calMonth] + ' ' + calYear + ', including its transactions, stays on file.')) return;
+    pushUndo();
+    acc.closedYr = calYear; acc.closedMo = calMonth;
+  }
+  document.getElementById('bank-modal').classList.remove('open');
+  if (acctModalOpen()) closeAcctModal();
+  renderBankAccounts(); renderBankSummary(); renderCalendar(); updateSummary();
 }
 
 function confirmDeleteBankAccount(id) {
@@ -8804,11 +8840,11 @@ function populateIncomeDest(selected) {
   const sel = document.getElementById('modal-income-dest');
   if (!sel) return;
   let html = '<option value="">None</option>';
-  if (bankAccounts.length) {
-    bankAccounts.forEach(a => {
-      html += '<option value="' + accountSourceKey(a) + '">' + escapeHtml(a.name) + '</option>';
-    });
-  }
+  bankAccounts.forEach(a => {
+    const isSel = accountSourceKey(a) === selected;
+    if (!accountOpenIn(a, calYear, calMonth) && !isSel) return;
+    html += '<option value="' + accountSourceKey(a) + '">' + escapeHtml(a.name) + (accountOpenIn(a, calYear, calMonth) ? '' : ' (closed)') + '</option>';
+  });
   sel.innerHTML = html;
   sel.value = selected || '';
 }
@@ -11549,7 +11585,7 @@ function cardPayRowHtml(card, yr, mo) {
   const pay = getCardPayment(card, yr, mo);
   const sel = pay ? pay.acct : '';
   let opts = '<option value="">Not tracked</option>';
-  bankAccounts.forEach(a => { opts += '<option value="' + a.id + '"' + (a.id === sel ? ' selected' : '') + '>' + escHtml(a.name) + '</option>'; });
+  bankAccounts.filter(a => accountOpenIn(a, yr, mo) || a.id === sel).forEach(a => { opts += '<option value="' + a.id + '"' + (a.id === sel ? ' selected' : '') + '>' + escHtml(a.name) + '</option>'; });
   const date = pay ? pay.date : cardPaymentDefaultDate(card, yr, mo);
   const st = 'background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:0.8em;padding:5px 8px';
   return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:0.8em;color:var(--muted)">' +
@@ -14374,11 +14410,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     <div class="form-field">
       <label>Account Type</label>
       <select id="bank-modal-type" onchange="toggleBankModalType()" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-sans);font-size:1.0em;padding:10px 12px;-webkit-appearance:none">
-        <option value="chequing">Chequing — manually updated balance</option>
-        <option value="savings">Savings — monthly balance tracking</option>
+        <option value="chequing">Chequing</option>
+        <option value="savings">Savings</option>
       </select>
     </div>
-    <div class="form-field">
+    <div class="form-field" id="bank-modal-balance-row">
       <label>Current Balance (CAD)</label>
       <input type="number" id="bank-modal-balance" placeholder="0" min="0" step="0.01">
     </div>
@@ -14412,6 +14448,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       <button class="btn-secondary" onclick="closeBankModal()">Cancel</button>
     </div>
     <div id="bank-modal-delete-btn" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+      <button id="bank-modal-close-acct" onclick="toggleCloseBankAccount()" style="width:100%;padding:10px;margin-bottom:6px;background:transparent;border:1px solid var(--border);color:var(--text);border-radius:8px;font-family:var(--font-sans);font-size:0.9286em;cursor:pointer">Close account</button>
+      <div id="bank-modal-close-note" style="font-size:0.75em;color:var(--muted);font-family:var(--font-mono);margin-bottom:12px;line-height:1.5"></div>
       <button onclick="confirmDeleteBankAccount(bankEditId)" style="width:100%;padding:10px;background:transparent;border:1px solid var(--expense-red);color:var(--expense-red);border-radius:8px;font-family:var(--font-sans);font-size:0.9286em;cursor:pointer;transition:all .15s" onmouseenter="this.style.background='rgba(255,91,122,.1)'" onmouseleave="this.style.background='transparent'">
         Delete Account
       </button>
