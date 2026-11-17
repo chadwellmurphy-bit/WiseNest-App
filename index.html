@@ -8868,6 +8868,12 @@ function saveIncomeModal() {
     if (item) {
       item.name = name;
       if (destAccount) item.destAccount = destAccount; else delete item.destAccount;
+      if (item.businessLink) {
+        const bk = businessBookings.find(x => x.id === item.businessLink);
+        if (bk && item.businessSplit !== undefined && Array.isArray(bk.depositSplit) && bk.depositSplit[item.businessSplit]) {
+          bk.depositSplit[item.businessSplit].acct = destAccount || '';
+        } else if (bk) bk.depositAccount = destAccount || '';
+      }
       if (item.oneTime) {
         // Keep one-time items stored as monthly internally; update the actual pay
         // stamp for their month rather than the recurring base amount.
@@ -12570,6 +12576,9 @@ function openBookingModalOnDay(day) {
 // Sync a booking → personal Money In. Only present when status==='paid' AND addToPersonal.
 // Uses the paid date (paidYr/paidMo/paidDay) for the personal entry.
 function syncBookingToPersonal(b) {
+  // Keep a deposit account chosen on the Money In entry if the booking has none
+  const prevInc = b ? budget.income.find(i => i.businessLink === b.id) : null;
+  const dest = (b && b.depositAccount !== undefined) ? b.depositAccount : ((prevInc && prevInc.destAccount) || '');
   // Remove any existing linked income first
   removeLinkedIncome(b.id);
   if (!b || !b.addToPersonal || b.status !== 'paid') return;
@@ -12578,20 +12587,27 @@ function syncBookingToPersonal(b) {
   const day = (b.paidDay !== undefined && b.paidDay !== null) ? b.paidDay : (b.day || 1);
   const amount = parseFloat(b.amount) || 0;
   if (amount === 0) return;
-  const id = 'bizlink_inc_' + b.id;
-  budget.income.push({
-    id, name: b.name || 'Business booking', freq: 'monthly', amount: 0,
-    anchorDate: null, payDay: day, payDay2: null,
-    oneTime: true, oneTimeYr: yr, oneTimeMo: mo, businessLink: b.id,
+  const parts = (Array.isArray(b.depositSplit) && b.depositSplit.length > 1)
+    ? b.depositSplit : [{ acct: dest, amount }];
+  parts.forEach((part, n) => {
+    const id = 'bizlink_inc_' + b.id + (n ? '_' + n : '');
+    const acctName = parts.length > 1 ? ((accountForSource(part.acct) || {}).name || 'other') : '';
+    budget.income.push({
+      id, name: (b.name || 'Business booking') + (acctName ? ' \u00b7 ' + acctName : ''), freq: 'monthly', amount: 0,
+      anchorDate: null, payDay: day, payDay2: null,
+      oneTime: true, oneTimeYr: yr, oneTimeMo: mo, businessLink: b.id,
+      ...(parts.length > 1 ? { businessSplit: n } : {}),
+      ...(part.acct ? { destAccount: part.acct } : {}),
+    });
+    incomeAmounts[id] = 0;
+    setActualPay(yr, mo, id, 0, part.amount);
   });
-  incomeAmounts[id] = 0;
-  setActualPay(yr, mo, id, 0, amount);
 }
 
 function removeLinkedIncome(bookingId) {
   const id = 'bizlink_inc_' + bookingId;
-  const idx = budget.income.findIndex(i => i.id === id || i.businessLink === bookingId);
-  if (idx !== -1) {
+  let idx;
+  while ((idx = budget.income.findIndex(i => i.id === id || i.businessLink === bookingId)) !== -1) {
     const realId = budget.income[idx].id;
     budget.income.splice(idx, 1);
     delete incomeAmounts[realId];
@@ -12759,6 +12775,13 @@ function openBookingModal(id) {
   document.getElementById('booking-deposit').value = b ? (b.deposit || '') : '';
   document.getElementById('booking-status').value  = b ? (b.status || 'quoted') : 'quoted';
   document.getElementById('booking-add-personal').checked = b ? !!b.addToPersonal : false;
+  // Deposit account: this booking's, else the one used last time
+  const linkedInc = b ? budget.income.find(i => i.businessLink === b.id) : null;
+  const depSel = b && b.depositAccount !== undefined ? b.depositAccount
+    : (linkedInc && linkedInc.destAccount) || businessMeta.lastDepositAccount || '';
+  _bkSplit = (b && Array.isArray(b.depositSplit) && b.depositSplit.length > 1) ? b.depositSplit.map(r => ({ ...r })) : [];
+  populateBookingDepositAcct(_bkSplit.length ? '__split' : depSel);
+  onBookingDepositMode();
   // Paid date: use stored, else today
   const paidDateEl = document.getElementById('booking-paid-date');
   if (paidDateEl) {
@@ -12794,6 +12817,92 @@ function onBookingStatusChange() {
   const apRow   = document.getElementById('booking-add-personal-row');
   if (pdField) pdField.style.display = isPaid ? '' : 'none';
   if (apRow)   apRow.style.display   = isPaid ? '' : 'none';
+  const daf = document.getElementById('booking-deposit-acct-field');
+  if (daf) daf.style.display = (isPaid && document.getElementById('booking-add-personal').checked) ? '' : 'none';
+}
+
+function populateBookingDepositAcct(selected) {
+  const sel = document.getElementById('booking-deposit-acct');
+  if (!sel) return;
+  let html = '<option value="">None (not tracked in an account)</option>';
+  bankAccounts.forEach(a => {
+    const key = accountSourceKey(a);
+    if (!accountOpenIn(a, calYear, calMonth) && key !== selected) return;
+    html += '<option value="' + key + '">' + escapeHtml(a.name) + (accountOpenIn(a, calYear, calMonth) ? '' : ' (closed)') + '</option>';
+  });
+  html += '<option value="__split">Split between accounts\u2026</option>';
+  sel.innerHTML = html;
+  sel.value = selected || '';
+  if (sel.value !== (selected || '')) sel.value = '';
+}
+
+// ── Split deposit (e.g. part e-transfer to the bank, part cash) ──
+let _bkSplit = [];   // [{ acct, amount }] — the last row always takes the remainder
+function _bkTotal() {
+  return (parseFloat(document.getElementById('booking-amount').value) || 0) + (parseFloat(document.getElementById('booking-tip').value) || 0);
+}
+function _bkAcctOptions(selected) {
+  let h = '';
+  bankAccounts.forEach(a => {
+    const key = accountSourceKey(a);
+    if (!accountOpenIn(a, calYear, calMonth) && key !== selected) return;
+    h += '<option value="' + key + '"' + (key === selected ? ' selected' : '') + '>' + escapeHtml(a.name) + '</option>';
+  });
+  return h;
+}
+function onBookingDepositMode() {
+  const isSplit = document.getElementById('booking-deposit-acct').value === '__split';
+  const box = document.getElementById('booking-split');
+  box.style.display = isSplit ? '' : 'none';
+  if (isSplit) {
+    if (_bkSplit.length < 2) {
+      const keys = bankAccounts.filter(a => accountOpenIn(a, calYear, calMonth)).map(accountSourceKey);
+      _bkSplit = [{ acct: keys[0] || '', amount: 0 }, { acct: keys[1] || keys[0] || '', amount: 0 }];
+    }
+    renderBookingSplit();
+  }
+}
+function renderBookingSplit() {
+  const box = document.getElementById('booking-split');
+  if (!box) return;
+  const total = _bkTotal();
+  const fixed = _bkSplit.slice(0, -1).reduce((t, r) => t + (parseFloat(r.amount) || 0), 0);
+  const rest = Math.round((total - fixed) * 100) / 100;
+  const st = 'background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-sans);font-size:0.95em;padding:8px 10px;box-sizing:border-box';
+  box.innerHTML = _bkSplit.map((r, i) => {
+    const last = i === _bkSplit.length - 1;
+    return '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">' +
+      '<select style="flex:1;min-width:0;' + st + '" onchange="_bkSplit[' + i + '].acct=this.value">' + _bkAcctOptions(r.acct) + '</select>' +
+      (last
+        ? '<div class="bk-rest" style="width:96px;text-align:right;font-family:var(--font-mono);font-size:0.9em;color:' + (rest < 0 ? 'var(--expense-red)' : 'var(--text)') + '" title="The rest of the total">' + fmtCents(rest) + '</div>'
+        : '<input type="number" step="0.01" min="0" placeholder="0.00" value="' + (r.amount || '') + '" style="width:96px;' + st + '" oninput="_bkSplit[' + i + '].amount=this.value;_bkSplitRefreshRest()">') +
+      (_bkSplit.length > 2 ? '<button type="button" onclick="_bkSplit.splice(' + i + ',1);renderBookingSplit()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1em;padding:0 2px" title="Remove">&times;</button>' : '') +
+    '</div>';
+  }).join('') +
+  '<div style="display:flex;justify-content:space-between;align-items:center;font-size:0.75em;font-family:var(--font-mono);color:var(--muted)">' +
+    '<span>Total <span class="bk-total">' + fmtCents(total) + '</span> &middot; last account gets the rest</span>' +
+    '<button type="button" onclick="_bkSplit.splice(_bkSplit.length-1,0,{acct:\'\',amount:0});renderBookingSplit()" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-family:var(--font-mono);font-size:1em;padding:0">+ account</button>' +
+  '</div>';
+}
+// Update just the remainder while typing (keeps focus in the amount box)
+function _bkSplitRefreshRest() {
+  const box = document.getElementById('booking-split');
+  if (!box || box.style.display === 'none') return;
+  const total = _bkTotal();
+  const fixed = _bkSplit.slice(0, -1).reduce((t, r) => t + (parseFloat(r.amount) || 0), 0);
+  const rest = Math.round((total - fixed) * 100) / 100;
+  const cell = box.querySelector('.bk-rest');
+  if (cell) { cell.textContent = fmtCents(rest); cell.style.color = rest < 0 ? 'var(--expense-red)' : 'var(--text)'; }
+  const tot = box.querySelector('.bk-total');
+  if (tot) tot.textContent = fmtCents(total);
+}
+// Final split with the remainder filled in: [{ acct, amount }]
+function _bkSplitResolved() {
+  const total = _bkTotal();
+  const rows = _bkSplit.map(r => ({ acct: r.acct || '', amount: Math.round((parseFloat(r.amount) || 0) * 100) / 100 }));
+  const fixed = rows.slice(0, -1).reduce((t, r) => t + r.amount, 0);
+  rows[rows.length - 1].amount = Math.round((total - fixed) * 100) / 100;
+  return rows.filter(r => r.amount !== 0);
 }
 
 function saveBooking() {
@@ -12809,6 +12918,14 @@ function saveBooking() {
   const deposit = parseFloat(document.getElementById('booking-deposit').value) || 0;
   const status  = document.getElementById('booking-status').value || 'quoted';
   const addToPersonal = document.getElementById('booking-add-personal').checked;
+  let depositAccount = document.getElementById('booking-deposit-acct').value || '';
+  let depositSplit = null;
+  if (depositAccount === '__split') {
+    depositSplit = _bkSplitResolved();
+    if (depositSplit.some(r => r.amount < 0)) { alert('The split adds up to more than the total. Lower one of the amounts.'); return; }
+    if (depositSplit.length < 2) { depositAccount = depositSplit.length ? depositSplit[0].acct : ''; depositSplit = null; }
+    else depositAccount = '';
+  }
   if (!name && amount === 0) { closeBookingModal(); return; }
 
   // Parse paid date (only relevant when paid)
@@ -12830,6 +12947,10 @@ function saveBooking() {
       target.fee = fee; target.tip = tip; target.amount = amount; target.day = day;
       if (evt) { target.yr = evt.yr; target.mo = evt.mo; }
       target.deposit = deposit; target.status = status; target.addToPersonal = addToPersonal;
+      if (addToPersonal) {
+        target.depositAccount = depositAccount;
+        if (depositSplit) target.depositSplit = depositSplit; else delete target.depositSplit;
+      }
       target.paidYr = paidYr; target.paidMo = paidMo; target.paidDay = paidDay;
     }
   } else {
@@ -12839,9 +12960,12 @@ function saveBooking() {
       mo: evt ? evt.mo : calMonth,
       day, name, description, fee, tip, amount, deposit, status, addToPersonal,
       paidYr, paidMo, paidDay,
+      ...(addToPersonal ? { depositAccount } : {}),
+      ...(addToPersonal && depositSplit ? { depositSplit } : {}),
     };
     businessBookings.push(target);
   }
+  if (addToPersonal && status === 'paid' && !depositSplit) businessMeta.lastDepositAccount = depositAccount;
   // Sync (or remove) the linked personal income entry
   if (target) syncBookingToPersonal(target);
 
@@ -14646,11 +14770,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     <div style="display:flex;gap:12px">
       <div class="form-field" style="flex:1">
         <label>Fee ($)</label>
-        <input type="number" id="booking-amount" placeholder="0" min="0" onkeydown="if(event.key==='Enter')saveBooking()" style="font-size:1.2em;font-family:var(--font-serif)">
+        <input type="number" id="booking-amount" placeholder="0" min="0" oninput="_bkSplitRefreshRest()" onkeydown="if(event.key==='Enter')saveBooking()" style="font-size:1.2em;font-family:var(--font-serif)">
       </div>
       <div class="form-field" style="flex:1">
         <label>Tip ($)</label>
-        <input type="number" id="booking-tip" placeholder="0" min="0" onkeydown="if(event.key==='Enter')saveBooking()" style="font-size:1.2em;font-family:var(--font-serif)">
+        <input type="number" id="booking-tip" placeholder="0" min="0" oninput="_bkSplitRefreshRest()" onkeydown="if(event.key==='Enter')saveBooking()" style="font-size:1.2em;font-family:var(--font-serif)">
       </div>
     </div>
     <div style="display:flex;gap:12px">
@@ -14681,9 +14805,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div class="setting-sub">Creates a linked income entry on the paid date</div>
       </div>
       <label class="toggle" style="flex-shrink:0">
-        <input type="checkbox" id="booking-add-personal">
+        <input type="checkbox" id="booking-add-personal" onchange="onBookingStatusChange()">
         <div class="toggle-track"></div>
       </label>
+    </div>
+    <div class="form-field" id="booking-deposit-acct-field" style="display:none">
+      <label>Deposit into</label>
+      <select id="booking-deposit-acct" onchange="onBookingDepositMode()" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-sans);font-size:1.0em;padding:10px 12px;-webkit-appearance:none"></select>
+      <div id="booking-split" style="display:none;margin-top:10px"></div>
+      <div style="font-size:0.7857em;color:var(--muted);font-family:var(--font-mono);margin-top:4px">Shows as a deposit in that account and updates its balance.</div>
     </div>
     <div class="modal-actions" style="gap:8px;align-items:center;flex-wrap:nowrap">
       <button class="btn-primary" style="flex:1;padding:10px;min-width:0" onclick="saveBooking()">Confirm</button>
