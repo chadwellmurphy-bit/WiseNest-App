@@ -942,7 +942,16 @@
   .acct-up-btn { width:100%; background:var(--surface2); border:none; border-top:1px solid var(--border); color:var(--accent2); font-family:var(--font-sans); font-size:0.85em; padding:10px; cursor:pointer; }
   .acct-up-btn:hover { background:var(--surface); }
   .tf-sel { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--font-sans); font-size:1em; padding:10px 12px; box-sizing:border-box; -webkit-appearance:none; }
-  .acct-tx-row { display:grid; grid-template-columns: 44px 1fr auto; gap:10px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
+  .acct-tx-row, .acct-tx-head { display:grid; grid-template-columns: 44px minmax(0,1fr) 84px 84px 92px; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px solid var(--border); }
+  .acct-tx-row { cursor:pointer; }
+  .acct-tx-head { position:sticky; top:0; z-index:1; background:var(--surface2); padding:7px 12px; font-family:var(--font-mono); font-size:0.68em; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .acct-tx-head > div:nth-child(n+3), .acct-tx-num { text-align:right; }
+  .acct-tx-num { font-family:var(--font-mono); font-size:0.85em; white-space:nowrap; }
+  .acct-tx-bal { font-family:var(--font-mono); font-size:0.85em; white-space:nowrap; text-align:right; color:var(--muted); }
+  @media (max-width: 520px) {
+    .acct-tx-row, .acct-tx-head { grid-template-columns: 34px minmax(0,1fr) 62px 62px 70px; gap:5px; padding-left:8px; padding-right:8px; }
+    .acct-tx-num, .acct-tx-bal { font-size:0.72em; }
+  }
   .acct-tx-row:last-child { border-bottom:none; }
   .acct-tx-row:hover { background:var(--surface2); }
   .acct-tx-row.upcoming { opacity:.55; }
@@ -952,6 +961,11 @@
   .acct-tx-sub { font-family:var(--font-mono); font-size:0.7em; color:var(--muted); margin-top:2px; }
   .acct-tx-amt { font-family:var(--font-mono); font-size:0.9em; text-align:right; white-space:nowrap; }
   .acct-tx-run { font-family:var(--font-mono); font-size:0.7em; color:var(--muted); text-align:right; margin-top:2px; }
+  @media (max-width: 520px) {
+    .acct-tx-name { font-size:0.82em; white-space:normal; overflow:visible; text-overflow:clip; line-height:1.25; overflow-wrap:anywhere; }
+    .acct-tx-sub { font-size:0.62em; }
+    .acct-tx-date b { font-size:1.3em; }
+  }
   .acct-tag { font-family:var(--font-mono); font-size:0.75em; border-radius:4px; padding:0 4px; margin-left:4px; border:1px solid currentColor; opacity:.8; }
 
   .bank-value {
@@ -7993,7 +8007,7 @@ function renderAcctModal() {
   const sum = idx => idx.reduce((t, i) => t + tx[i].amount, 0);
   const totIn = past.filter(i => tx[i].amount > 0).reduce((t, i) => t + tx[i].amount, 0);
   const totOut = past.filter(i => tx[i].amount < 0).reduce((t, i) => t + tx[i].amount, 0);
-  let html = '<div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:0.75em;position:sticky;top:0;z-index:1">' +
+  let html = '<div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:0.75em">' +
     '<span style="color:var(--income-green)">In ' + fmtCents(totIn) + '</span><span style="color:var(--expense-red)">Out ' + fmtCents(Math.abs(totOut)) + '</span>' +
     '<span style="color:var(--muted)">' + (isCur ? 'so far' : (up.length ? '' : MONTHS[mo])) + '</span></div>';
   if (up.length) {
@@ -8006,6 +8020,7 @@ function renderAcctModal() {
       (tx.length ? 'Nothing has gone through yet in ' + MONTHS[mo] + '.'
         : 'No deposits or payments linked to this account in ' + MONTHS[mo] + '.<br><span style="font-size:0.9em">Pick this account as the deposit account or “paid from” on Money In / Money Out items, or add one below.</span>') + '</div>';
   }
+  if (past.length) html += _acctTxHead();
   past.forEach(i => { html += _acctTxRow(tx[i], i, runs[i], yr, mo, false); });
   document.getElementById('acct-tx').innerHTML = html;
   if (document.getElementById('acct-up-modal').classList.contains('open')) renderAcctUpcoming();
@@ -8017,14 +8032,19 @@ function _acctTxRow(x, i, run, yr, mo, upcoming) {
     : x.kind === 'transfer' ? '<span style="color:var(--accent2)">Transfer</span>'
     : x.kind === 'refund' ? '<span style="color:var(--income-green)">Refund</span>'
     : x.kind === 'deposit' ? 'Deposit' : 'Payment';
-  const amtColor = x.amount >= 0 ? 'var(--income-green)' : 'var(--text)';
+  const inn = x.amount > 0 ? '+ ' + fmtCents(x.amount) : '';
+  const out = x.amount < 0 ? '− ' + fmtCents(-x.amount) : '';
   return '<div class="acct-tx-row" onclick="acctOpenTx(' + i + ')">' +
     '<div class="acct-tx-date">' + MONTHS[mo] + '<b>' + x.day + '</b></div>' +
     '<div style="min-width:0"><div class="acct-tx-name">' + escHtml(x.name) + '</div>' +
       '<div class="acct-tx-sub">' + [tag, x.sub ? escHtml(x.sub) : ''].filter(Boolean).join(' &middot; ') + '</div></div>' +
-    '<div><div class="acct-tx-amt" style="color:' + amtColor + '">' + (x.amount >= 0 ? '+' : '-') + fmtCents(Math.abs(x.amount)) + '</div>' +
-      (run !== null && run !== undefined ? '<div class="acct-tx-run">' + (upcoming ? 'then ' : '') + fmtCents(run) + '</div>' : '') + '</div>' +
-    '</div>';
+    '<div class="acct-tx-num" style="color:var(--income-green)">' + inn + '</div>' +
+    '<div class="acct-tx-num">' + out + '</div>' +
+    '<div class="acct-tx-bal">' + (run !== null && run !== undefined ? fmtCents(run) : '') + '</div>' +
+  '</div>';
+}
+function _acctTxHead(balLabel) {
+  return '<div class="acct-tx-head"><div>Date</div><div>Description</div><div>In</div><div>Out</div><div>' + (balLabel || 'Balance') + '</div></div>';
 }
 
 function openAcctUpcoming() {
@@ -8040,7 +8060,7 @@ function renderAcctUpcoming() {
   document.getElementById('acct-up-sub').textContent = MONTHS[calMonth] + ' ' + calYear + ' · ' + _acctUpIdx.length + ' item' + (_acctUpIdx.length === 1 ? '' : 's') +
     ' · net ' + (n >= 0 ? '+' : '-') + fmtCents(Math.abs(n)) + ' · soonest first';
   document.getElementById('acct-up-list').innerHTML = _acctUpIdx.length
-    ? _acctUpIdx.map(i => _acctTxRow(_acctLastTx[i], i, _acctRuns[i], calYear, calMonth, true)).join('')
+    ? _acctTxHead('Then') + _acctUpIdx.map(i => _acctTxRow(_acctLastTx[i], i, _acctRuns[i], calYear, calMonth, true)).join('')
     : '<div style="padding:22px;text-align:center;color:var(--muted);font-size:0.875em">Nothing else coming up this month.</div>';
 }
 
